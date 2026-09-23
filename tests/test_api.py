@@ -11,6 +11,12 @@ def client() -> TestClient:
     return TestClient(app)
 
 
+def test_root_redirects_to_docs(client: TestClient) -> None:
+    resp = client.get("/", follow_redirects=False)
+    assert resp.status_code in (302, 307)
+    assert resp.headers["location"] == "/docs"
+
+
 def test_healthz(client: TestClient) -> None:
     resp = client.get("/healthz")
     assert resp.status_code == 200

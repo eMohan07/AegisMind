@@ -4,6 +4,7 @@ import logging
 from typing import Any
 
 from fastapi import FastAPI, HTTPException
+from fastapi.responses import RedirectResponse
 from pydantic import BaseModel, Field
 
 from aegismind_core.domain.models import Chunk, RetrievalQuery, RetrievalResult
@@ -38,6 +39,12 @@ class DocumentIngestRequest(BaseModel):
     document_id: str
     content: str
     metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+@app.get("/", include_in_schema=False)
+async def root() -> RedirectResponse:
+    """Redirect portal root to interactive documentation."""
+    return RedirectResponse(url="/docs")
 
 
 @app.get("/healthz")
