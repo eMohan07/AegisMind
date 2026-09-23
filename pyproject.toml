@@ -1,0 +1,56 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "aegismind"
+version = "0.1.0"
+description = "Modular enterprise knowledge platform with Zanzibar access control at retrieval"
+readme = "README.md"
+requires-python = ">=3.12"
+authors = [
+    { name = "AegisMind Core Team" }
+]
+dependencies = [
+    "pydantic>=2.0.0",
+    "pydantic-settings>=2.0.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0.0",
+    "pytest-asyncio>=0.23.0",
+    "ruff>=0.4.0",
+]
+spicedb = [
+    "grpcio>=1.60.0",
+    "protobuf>=4.25.0",
+]
+
+[project.entry-points."aegismind.authz"]
+memory = "aegismind_adapters.authz_memory:MemoryAuthzAdapter"
+spicedb = "aegismind_adapters.authz_spicedb:SpiceDBAuthzAdapter"
+
+[project.entry-points."aegismind.vector_store"]
+memory = "aegismind_adapters.vector_memory:MemoryVectorStoreAdapter"
+
+[project.entry-points."aegismind.embedder"]
+mock = "aegismind_adapters.embedder_mock:MockEmbedderAdapter"
+
+[project.entry-points."aegismind.reranker"]
+mock = "aegismind_adapters.reranker_mock:MockRerankerAdapter"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "W", "UP"]
+ignore = []
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
