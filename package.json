@@ -1,0 +1,9 @@
+{
+  "name": "aegismind-monorepo",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "build:lens": "pnpm --filter lens build",
+    "build:scout": "pnpm --filter scout build"
+  }
+}

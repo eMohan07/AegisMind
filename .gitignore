@@ -36,6 +36,8 @@ htmlcov/
 # Frontend / node artifacts
 node_modules/
 .npm/
+.output/
+.wxt/
 
 # IDE and operating system
 .idea/
