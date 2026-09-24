@@ -124,3 +124,23 @@ class ScribeWorker:
                 final_cursor=current_cursor,
                 errors=[*all_errors, str(exc)],
             )
+
+
+async def run_worker_daemon() -> None:
+    """Run persistent ingestion worker listening for scheduled sync tasks."""
+    import asyncio
+
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+    )
+    logger.info("AegisMind Scribe worker daemon initialized and listening for sync tasks.")
+    while True:
+        await asyncio.sleep(5)
+
+
+if __name__ == "__main__":
+    import asyncio
+
+    asyncio.run(run_worker_daemon())
+

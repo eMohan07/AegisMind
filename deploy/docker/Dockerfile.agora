@@ -15,8 +15,8 @@ COPY packages ./packages
 COPY connectors ./connectors
 COPY src ./src
 
-# Synchronize dependencies
-RUN uv sync --frozen --no-dev
+# Synchronize dependencies for all workspace packages
+RUN uv sync --all-packages --frozen --no-dev
 
 # Production Runtime Stage
 FROM python:3.12-slim

@@ -520,6 +520,7 @@ source = { virtual = "." }
 dependencies = [
     { name = "fastapi" },
     { name = "pydantic" },
+    { name = "uvicorn" },
 ]
 
 [package.optional-dependencies]
@@ -579,6 +580,7 @@ requires-dist = [
     { name = "respx", marker = "extra == 'dev'", specifier = ">=0.21" },
     { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.6" },
     { name = "syrupy", marker = "extra == 'dev'", specifier = ">=4.7" },
+    { name = "uvicorn", specifier = ">=0.30" },
     { name = "vcrpy", marker = "extra == 'dev'", specifier = ">=6" },
 ]
 provides-extras = ["dev", "integration"]
