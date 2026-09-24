@@ -58,6 +58,8 @@ select = ["E", "F", "I", "UP", "B", "ASYNC", "S"]
 
 [tool.ruff.lint.per-file-ignores]
 "tests/**" = ["S101", "S105", "S106"]
+"packages/**/tests/**" = ["S101", "S105", "S106"]
+"**/verify/**" = ["S101"]
 "examples/**" = ["S101"]
 
 [tool.mypy]
@@ -70,7 +72,7 @@ disallow_untyped_decorators = false
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["packages", "connectors", "tests"]
-pythonpath = ["src", "packages/aegismind-types/src", "packages/aegismind-authz/src"]
+pythonpath = ["src", "packages/aegismind-types/src", "packages/aegismind-authz/src", "packages/aegismind-connector-sdk/src"]
 markers = [
     "permission: marks tests as permission verification tests",
     "integration: marks tests as integration tests requiring external services",
