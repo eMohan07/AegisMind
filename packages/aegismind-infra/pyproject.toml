@@ -1,0 +1,36 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "aegismind-infra"
+version = "0.0.1"
+description = "Storage, secret management, and envelope encryption for AegisMind"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "aegismind-types",
+    "cryptography>=42.0",
+    "pydantic>=2.7",
+    "httpx>=0.27",
+]
+
+[project.optional-dependencies]
+postgres = [
+    "psycopg[binary]>=3.2",
+]
+
+[project.entry-points."aegismind.secret_store"]
+postgres_envelope = "aegismind_infra.secrets.postgres_envelope:PostgresEnvelopeSecretStore"
+memory = "aegismind_infra.secrets.memory:MemorySecretStore"
+openbao = "aegismind_infra.secrets.openbao:OpenBaoSecretStore"
+
+[project.entry-points."aegismind.object_store"]
+memory = "aegismind_infra.storage.memory:MemoryObjectStore"
+s3 = "aegismind_infra.storage.s3:S3CompatibleObjectStore"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.uv.sources]
+aegismind-types = { workspace = true }

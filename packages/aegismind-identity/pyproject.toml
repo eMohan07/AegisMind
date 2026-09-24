@@ -1,0 +1,26 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "aegismind-identity"
+version = "0.0.1"
+description = "Identity provider ports, OIDC normalizer, and database store for AegisMind"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "aegismind-types",
+    "pydantic>=2.7",
+    "httpx>=0.27",
+]
+
+[project.entry-points."aegismind.identity"]
+memory = "aegismind_identity.adapters.memory:MemoryIdentityAdapter"
+db = "aegismind_identity.adapters.db:DatabaseIdentityAdapter"
+oidc = "aegismind_identity.adapters.oidc:OidcIdentityAdapter"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.uv.sources]
+aegismind-types = { workspace = true }
