@@ -8,9 +8,34 @@ resolution-markers = [
 
 [manifest]
 members = [
+    "aegismind-authz",
     "aegismind-types",
     "aegismind-workspace",
 ]
+
+[[package]]
+name = "aegismind-authz"
+version = "0.0.1"
+source = { editable = "packages/aegismind-authz" }
+dependencies = [
+    { name = "aegismind-types" },
+    { name = "pydantic" },
+]
+
+[package.optional-dependencies]
+spicedb = [
+    { name = "authzed" },
+    { name = "grpcio" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "aegismind-types", editable = "packages/aegismind-types" },
+    { name = "authzed", marker = "extra == 'spicedb'", specifier = ">=1.0" },
+    { name = "grpcio", marker = "extra == 'spicedb'", specifier = ">=1.66" },
+    { name = "pydantic", specifier = ">=2.7" },
+]
+provides-extras = ["spicedb"]
 
 [[package]]
 name = "aegismind-types"

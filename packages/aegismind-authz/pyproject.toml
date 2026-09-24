@@ -1,0 +1,26 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "aegismind-authz"
+version = "0.0.1"
+description = "Zanzibar and SpiceDB authorization subsystem for AegisMind"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "aegismind-types",
+    "pydantic>=2.7",
+]
+
+[project.optional-dependencies]
+spicedb = [
+    "authzed>=1.0",
+    "grpcio>=1.66",
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.uv.sources]
+aegismind-types = { workspace = true }
