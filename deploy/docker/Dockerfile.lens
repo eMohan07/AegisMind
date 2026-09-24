@@ -5,14 +5,13 @@ WORKDIR /app
 
 RUN corepack enable && corepack prepare pnpm@latest --activate
 
-# Copy root configs and package manifests
+# Copy root configs and workspace package definitions
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml .npmrc ./
-COPY apps/lens/package.json ./apps/lens/
-
-RUN pnpm install --frozen-lockfile
-
-# Copy lens source
+COPY apps/scout/package.json ./apps/scout/package.json
 COPY apps/lens ./apps/lens
+
+# Install dependencies with full workspace integrity
+RUN pnpm install --frozen-lockfile
 
 # Build production bundle
 RUN pnpm --filter lens build

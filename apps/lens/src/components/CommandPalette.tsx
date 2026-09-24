@@ -42,7 +42,7 @@ export function CommandPalette({
       <div className="w-full max-w-xl overflow-hidden rounded-xl border border-border bg-card shadow-2xl">
         <Command
           className="w-full"
-          onKeyDown={(e) => {
+          onKeyDown={(e: React.KeyboardEvent) => {
             if (e.key === "Escape") {
               onOpenChange(false);
             }
