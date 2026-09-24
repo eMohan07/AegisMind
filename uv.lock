@@ -12,6 +12,7 @@ members = [
     "aegismind-connector-sdk",
     "aegismind-identity",
     "aegismind-infra",
+    "aegismind-ingestion",
     "aegismind-retrieval",
     "aegismind-types",
     "aegismind-workspace",
@@ -104,6 +105,27 @@ requires-dist = [
     { name = "pydantic", specifier = ">=2.7" },
 ]
 provides-extras = ["postgres"]
+
+[[package]]
+name = "aegismind-ingestion"
+version = "0.0.1"
+source = { editable = "packages/aegismind-ingestion" }
+dependencies = [
+    { name = "aegismind-authz" },
+    { name = "aegismind-retrieval" },
+    { name = "aegismind-types" },
+    { name = "httpx" },
+    { name = "pydantic" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "aegismind-authz", editable = "packages/aegismind-authz" },
+    { name = "aegismind-retrieval", editable = "packages/aegismind-retrieval" },
+    { name = "aegismind-types", editable = "packages/aegismind-types" },
+    { name = "httpx", specifier = ">=0.27" },
+    { name = "pydantic", specifier = ">=2.7" },
+]
 
 [[package]]
 name = "aegismind-retrieval"

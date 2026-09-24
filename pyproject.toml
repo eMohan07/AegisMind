@@ -80,6 +80,7 @@ pythonpath = [
     "packages/aegismind-infra/src",
     "packages/aegismind-identity/src",
     "packages/aegismind-retrieval/src",
+    "packages/aegismind-ingestion/src",
 ]
 markers = [
     "permission: marks tests as permission verification tests",
