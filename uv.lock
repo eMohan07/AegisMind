@@ -524,7 +524,10 @@ dependencies = [
 
 [package.optional-dependencies]
 dev = [
+    { name = "authzed" },
+    { name = "grpcio" },
     { name = "mypy" },
+    { name = "psycopg", extra = ["binary"] },
     { name = "pytest" },
     { name = "pytest-asyncio" },
     { name = "pytest-recording" },
@@ -541,7 +544,10 @@ integration = [
 
 [package.dev-dependencies]
 dev = [
+    { name = "authzed" },
+    { name = "grpcio" },
     { name = "mypy" },
+    { name = "psycopg", extra = ["binary"] },
     { name = "pytest" },
     { name = "pytest-asyncio" },
     { name = "pytest-recording" },
@@ -558,10 +564,13 @@ integration = [
 
 [package.metadata]
 requires-dist = [
+    { name = "authzed", marker = "extra == 'dev'", specifier = ">=1.0" },
     { name = "authzed", marker = "extra == 'integration'", specifier = ">=1.0" },
     { name = "fastapi", specifier = ">=0.115" },
+    { name = "grpcio", marker = "extra == 'dev'", specifier = ">=1.66" },
     { name = "grpcio", marker = "extra == 'integration'", specifier = ">=1.66" },
     { name = "mypy", marker = "extra == 'dev'", specifier = ">=1.11" },
+    { name = "psycopg", extras = ["binary"], marker = "extra == 'dev'", specifier = ">=3.2" },
     { name = "psycopg", extras = ["binary"], marker = "extra == 'integration'", specifier = ">=3.2" },
     { name = "pydantic", specifier = ">=2.10" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=8" },
@@ -576,7 +585,10 @@ provides-extras = ["dev", "integration"]
 
 [package.metadata.requires-dev]
 dev = [
+    { name = "authzed", specifier = ">=1.0" },
+    { name = "grpcio", specifier = ">=1.66" },
     { name = "mypy", specifier = ">=1.11" },
+    { name = "psycopg", extras = ["binary"], specifier = ">=3.2" },
     { name = "pytest", specifier = ">=8" },
     { name = "pytest-asyncio", specifier = ">=0.24" },
     { name = "pytest-recording", specifier = ">=0.13" },
