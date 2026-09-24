@@ -1,0 +1,16 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "aegismind-types"
+version = "0.0.1"
+description = "Core domain types and schemas for AegisMind"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "pydantic>=2.7",
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]

@@ -6,6 +6,23 @@ resolution-markers = [
     "python_full_version < '3.15'",
 ]
 
+[manifest]
+members = [
+    "aegismind-types",
+    "aegismind-workspace",
+]
+
+[[package]]
+name = "aegismind-types"
+version = "0.0.1"
+source = { editable = "packages/aegismind-types" }
+dependencies = [
+    { name = "pydantic" },
+]
+
+[package.metadata]
+requires-dist = [{ name = "pydantic", specifier = ">=2.7" }]
+
 [[package]]
 name = "aegismind-workspace"
 version = "0.1.0"
