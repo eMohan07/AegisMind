@@ -1,0 +1,37 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "aegismind-retrieval"
+version = "0.0.1"
+description = "Hybrid retrieval engine with RRF and Zanzibar authorization enforcement for AegisMind"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "aegismind-types",
+    "aegismind-authz",
+    "pydantic>=2.7",
+    "httpx>=0.27",
+    "numpy>=1.26",
+]
+
+[project.entry-points."aegismind.vector_store"]
+memory = "aegismind_retrieval.adapters_vector:MemoryVectorStoreAdapter"
+pgvectorscale = "aegismind_retrieval.adapters_vector:PgVectorScaleAdapter"
+qdrant = "aegismind_retrieval.adapters_vector:QdrantVectorStoreAdapter"
+
+[project.entry-points."aegismind.embedder"]
+tei = "aegismind_retrieval.adapters_model:TeiEmbedderAdapter"
+mock = "aegismind_retrieval.adapters_model:MockEmbedderAdapter"
+
+[project.entry-points."aegismind.reranker"]
+tei = "aegismind_retrieval.adapters_model:TeiRerankerAdapter"
+mock = "aegismind_retrieval.adapters_model:MockRerankerAdapter"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.uv.sources]
+aegismind-types = { workspace = true }
+aegismind-authz = { workspace = true }
