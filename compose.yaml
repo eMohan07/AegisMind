@@ -78,6 +78,7 @@ services:
       context: .
       dockerfile: deploy/docker/Dockerfile.agora
     image: aegismind/agora:latest
+    pull_policy: build
     container_name: aegismind-agora
     restart: unless-stopped
     environment:
@@ -114,6 +115,7 @@ services:
       context: .
       dockerfile: deploy/docker/Dockerfile.scribe
     image: aegismind/scribe:latest
+    pull_policy: build
     container_name: aegismind-scribe
     restart: unless-stopped
     environment:
@@ -139,6 +141,7 @@ services:
       context: .
       dockerfile: deploy/docker/Dockerfile.lens
     image: aegismind/lens:latest
+    pull_policy: build
     container_name: aegismind-lens
     restart: unless-stopped
     ports:
