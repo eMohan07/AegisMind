@@ -1,0 +1,36 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "aegismind-core"
+version = "0.0.1"
+description = "Core backend, API, and orchestration engine for AegisMind"
+requires-python = ">=3.12"
+dependencies = [
+    "aegismind-types",
+    "aegismind-authz",
+    "aegismind-retrieval",
+    "aegismind-ingestion",
+    "aegismind-identity",
+    "aegismind-infra",
+    "aegismind-connector-sdk",
+    "aegismind-mcp-bridge",
+    "fastapi>=0.115",
+    "uvicorn>=0.30",
+    "httpx>=0.27",
+    "pydantic>=2.7",
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.uv.sources]
+aegismind-types = { workspace = true }
+aegismind-authz = { workspace = true }
+aegismind-retrieval = { workspace = true }
+aegismind-ingestion = { workspace = true }
+aegismind-identity = { workspace = true }
+aegismind-infra = { workspace = true }
+aegismind-connector-sdk = { workspace = true }
+aegismind-mcp-bridge = { workspace = true }

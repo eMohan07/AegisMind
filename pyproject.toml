@@ -81,6 +81,8 @@ pythonpath = [
     "packages/aegismind-identity/src",
     "packages/aegismind-retrieval/src",
     "packages/aegismind-ingestion/src",
+    "packages/aegismind-mcp-bridge/src",
+    "packages/aegismind-core/src",
 ]
 markers = [
     "permission: marks tests as permission verification tests",
