@@ -1,0 +1,23 @@
+[
+  {
+    "id": "sf_opp_1",
+    "object_type": "Opportunity",
+    "Name": "Enterprise Cloud Migration - Acme Corp",
+    "OwnerId": "005xx000001",
+    "UserRoleId": "00Exx000001",
+    "Amount": 250000.0,
+    "StageName": "Proposal/Price Quote",
+    "updated_at": "2026-09-23T10:00:00Z",
+    "created_at": "2026-08-15T09:00:00Z"
+  },
+  {
+    "id": "sf_kb_2",
+    "object_type": "KnowledgeArticle",
+    "Title": "Troubleshooting Single Sign-On SAML Integration",
+    "OwnerId": "005xx000002",
+    "UserRoleId": "00Exx000002",
+    "IsVisibleInPkb": true,
+    "updated_at": "2026-09-22T13:30:00Z",
+    "created_at": "2026-07-20T10:00:00Z"
+  }
+]

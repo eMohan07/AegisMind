@@ -9,7 +9,22 @@ resolution-markers = [
 [manifest]
 members = [
     "aegismind-authz",
+    "aegismind-connector-confluence",
+    "aegismind-connector-dropbox",
+    "aegismind-connector-github",
+    "aegismind-connector-gmail",
+    "aegismind-connector-google-drive",
+    "aegismind-connector-granola",
+    "aegismind-connector-jira",
+    "aegismind-connector-linear",
+    "aegismind-connector-notion",
+    "aegismind-connector-salesforce",
     "aegismind-connector-sdk",
+    "aegismind-connector-sharepoint",
+    "aegismind-connector-slack",
+    "aegismind-connector-teams",
+    "aegismind-connector-weblink",
+    "aegismind-connector-zendesk",
     "aegismind-core",
     "aegismind-identity",
     "aegismind-infra",
@@ -45,6 +60,196 @@ requires-dist = [
 provides-extras = ["spicedb"]
 
 [[package]]
+name = "aegismind-connector-confluence"
+version = "0.0.1"
+source = { editable = "connectors/confluence" }
+dependencies = [
+    { name = "aegismind-connector-sdk" },
+    { name = "aegismind-types" },
+    { name = "httpx" },
+    { name = "pydantic" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "aegismind-connector-sdk", editable = "packages/aegismind-connector-sdk" },
+    { name = "aegismind-types", editable = "packages/aegismind-types" },
+    { name = "httpx", specifier = ">=0.27" },
+    { name = "pydantic", specifier = ">=2.7" },
+]
+
+[[package]]
+name = "aegismind-connector-dropbox"
+version = "0.0.1"
+source = { editable = "connectors/dropbox" }
+dependencies = [
+    { name = "aegismind-connector-sdk" },
+    { name = "aegismind-types" },
+    { name = "httpx" },
+    { name = "pydantic" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "aegismind-connector-sdk", editable = "packages/aegismind-connector-sdk" },
+    { name = "aegismind-types", editable = "packages/aegismind-types" },
+    { name = "httpx", specifier = ">=0.27" },
+    { name = "pydantic", specifier = ">=2.7" },
+]
+
+[[package]]
+name = "aegismind-connector-github"
+version = "0.0.1"
+source = { editable = "connectors/github" }
+dependencies = [
+    { name = "aegismind-connector-sdk" },
+    { name = "aegismind-types" },
+    { name = "httpx" },
+    { name = "pydantic" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "aegismind-connector-sdk", editable = "packages/aegismind-connector-sdk" },
+    { name = "aegismind-types", editable = "packages/aegismind-types" },
+    { name = "httpx", specifier = ">=0.27" },
+    { name = "pydantic", specifier = ">=2.7" },
+]
+
+[[package]]
+name = "aegismind-connector-gmail"
+version = "0.0.1"
+source = { editable = "connectors/gmail" }
+dependencies = [
+    { name = "aegismind-connector-sdk" },
+    { name = "aegismind-types" },
+    { name = "httpx" },
+    { name = "pydantic" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "aegismind-connector-sdk", editable = "packages/aegismind-connector-sdk" },
+    { name = "aegismind-types", editable = "packages/aegismind-types" },
+    { name = "httpx", specifier = ">=0.27" },
+    { name = "pydantic", specifier = ">=2.7" },
+]
+
+[[package]]
+name = "aegismind-connector-google-drive"
+version = "0.0.1"
+source = { editable = "connectors/google_drive" }
+dependencies = [
+    { name = "aegismind-connector-sdk" },
+    { name = "aegismind-types" },
+    { name = "httpx" },
+    { name = "pydantic" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "aegismind-connector-sdk", editable = "packages/aegismind-connector-sdk" },
+    { name = "aegismind-types", editable = "packages/aegismind-types" },
+    { name = "httpx", specifier = ">=0.27" },
+    { name = "pydantic", specifier = ">=2.7" },
+]
+
+[[package]]
+name = "aegismind-connector-granola"
+version = "0.0.1"
+source = { editable = "connectors/granola" }
+dependencies = [
+    { name = "aegismind-connector-sdk" },
+    { name = "aegismind-types" },
+    { name = "httpx" },
+    { name = "pydantic" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "aegismind-connector-sdk", editable = "packages/aegismind-connector-sdk" },
+    { name = "aegismind-types", editable = "packages/aegismind-types" },
+    { name = "httpx", specifier = ">=0.27" },
+    { name = "pydantic", specifier = ">=2.7" },
+]
+
+[[package]]
+name = "aegismind-connector-jira"
+version = "0.0.1"
+source = { editable = "connectors/jira" }
+dependencies = [
+    { name = "aegismind-connector-sdk" },
+    { name = "aegismind-types" },
+    { name = "httpx" },
+    { name = "pydantic" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "aegismind-connector-sdk", editable = "packages/aegismind-connector-sdk" },
+    { name = "aegismind-types", editable = "packages/aegismind-types" },
+    { name = "httpx", specifier = ">=0.27" },
+    { name = "pydantic", specifier = ">=2.7" },
+]
+
+[[package]]
+name = "aegismind-connector-linear"
+version = "0.0.1"
+source = { editable = "connectors/linear" }
+dependencies = [
+    { name = "aegismind-connector-sdk" },
+    { name = "aegismind-types" },
+    { name = "httpx" },
+    { name = "pydantic" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "aegismind-connector-sdk", editable = "packages/aegismind-connector-sdk" },
+    { name = "aegismind-types", editable = "packages/aegismind-types" },
+    { name = "httpx", specifier = ">=0.27" },
+    { name = "pydantic", specifier = ">=2.7" },
+]
+
+[[package]]
+name = "aegismind-connector-notion"
+version = "0.0.1"
+source = { editable = "connectors/notion" }
+dependencies = [
+    { name = "aegismind-connector-sdk" },
+    { name = "aegismind-types" },
+    { name = "httpx" },
+    { name = "pydantic" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "aegismind-connector-sdk", editable = "packages/aegismind-connector-sdk" },
+    { name = "aegismind-types", editable = "packages/aegismind-types" },
+    { name = "httpx", specifier = ">=0.27" },
+    { name = "pydantic", specifier = ">=2.7" },
+]
+
+[[package]]
+name = "aegismind-connector-salesforce"
+version = "0.0.1"
+source = { editable = "connectors/salesforce" }
+dependencies = [
+    { name = "aegismind-connector-sdk" },
+    { name = "aegismind-types" },
+    { name = "httpx" },
+    { name = "pydantic" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "aegismind-connector-sdk", editable = "packages/aegismind-connector-sdk" },
+    { name = "aegismind-types", editable = "packages/aegismind-types" },
+    { name = "httpx", specifier = ">=0.27" },
+    { name = "pydantic", specifier = ">=2.7" },
+]
+
+[[package]]
 name = "aegismind-connector-sdk"
 version = "0.0.1"
 source = { editable = "packages/aegismind-connector-sdk" }
@@ -63,6 +268,101 @@ requires-dist = [
     { name = "jsonpath-ng", specifier = ">=1.6" },
     { name = "jsonschema", specifier = ">=4.20" },
     { name = "pyyaml", specifier = ">=6.0" },
+]
+
+[[package]]
+name = "aegismind-connector-sharepoint"
+version = "0.0.1"
+source = { editable = "connectors/sharepoint" }
+dependencies = [
+    { name = "aegismind-connector-sdk" },
+    { name = "aegismind-types" },
+    { name = "httpx" },
+    { name = "pydantic" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "aegismind-connector-sdk", editable = "packages/aegismind-connector-sdk" },
+    { name = "aegismind-types", editable = "packages/aegismind-types" },
+    { name = "httpx", specifier = ">=0.27" },
+    { name = "pydantic", specifier = ">=2.7" },
+]
+
+[[package]]
+name = "aegismind-connector-slack"
+version = "0.0.1"
+source = { editable = "connectors/slack" }
+dependencies = [
+    { name = "aegismind-connector-sdk" },
+    { name = "aegismind-types" },
+    { name = "httpx" },
+    { name = "pydantic" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "aegismind-connector-sdk", editable = "packages/aegismind-connector-sdk" },
+    { name = "aegismind-types", editable = "packages/aegismind-types" },
+    { name = "httpx", specifier = ">=0.27" },
+    { name = "pydantic", specifier = ">=2.7" },
+]
+
+[[package]]
+name = "aegismind-connector-teams"
+version = "0.0.1"
+source = { editable = "connectors/teams" }
+dependencies = [
+    { name = "aegismind-connector-sdk" },
+    { name = "aegismind-types" },
+    { name = "httpx" },
+    { name = "pydantic" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "aegismind-connector-sdk", editable = "packages/aegismind-connector-sdk" },
+    { name = "aegismind-types", editable = "packages/aegismind-types" },
+    { name = "httpx", specifier = ">=0.27" },
+    { name = "pydantic", specifier = ">=2.7" },
+]
+
+[[package]]
+name = "aegismind-connector-weblink"
+version = "0.0.1"
+source = { editable = "connectors/weblink" }
+dependencies = [
+    { name = "aegismind-connector-sdk" },
+    { name = "aegismind-types" },
+    { name = "httpx" },
+    { name = "pydantic" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "aegismind-connector-sdk", editable = "packages/aegismind-connector-sdk" },
+    { name = "aegismind-types", editable = "packages/aegismind-types" },
+    { name = "httpx", specifier = ">=0.27" },
+    { name = "pydantic", specifier = ">=2.7" },
+]
+
+[[package]]
+name = "aegismind-connector-zendesk"
+version = "0.0.1"
+source = { editable = "connectors/zendesk" }
+dependencies = [
+    { name = "aegismind-connector-sdk" },
+    { name = "aegismind-types" },
+    { name = "httpx" },
+    { name = "pydantic" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "aegismind-connector-sdk", editable = "packages/aegismind-connector-sdk" },
+    { name = "aegismind-types", editable = "packages/aegismind-types" },
+    { name = "httpx", specifier = ">=0.27" },
+    { name = "pydantic", specifier = ">=2.7" },
 ]
 
 [[package]]

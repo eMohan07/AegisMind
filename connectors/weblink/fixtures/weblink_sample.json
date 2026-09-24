@@ -1,0 +1,20 @@
+[
+  {
+    "id": "web_pg_1",
+    "url": "https://docs.aegismind.io/intro",
+    "title": "AegisMind Documentation Introduction",
+    "content": "AegisMind is an enterprise knowledge platform with access control.",
+    "robots_allowed": true,
+    "updated_at": "2026-09-23T18:00:00Z",
+    "created_at": "2026-09-01T00:00:00Z"
+  },
+  {
+    "id": "web_pg_2",
+    "url": "https://docs.aegismind.io/architecture/retrieval",
+    "title": "The Sacred Enforcement Pipeline",
+    "content": "Hybrid search with Zanzibar authorization enforced at retrieval.",
+    "robots_allowed": true,
+    "updated_at": "2026-09-23T19:00:00Z",
+    "created_at": "2026-09-01T00:00:00Z"
+  }
+]

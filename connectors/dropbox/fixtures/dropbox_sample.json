@@ -1,0 +1,29 @@
+[
+  {
+    "id": "dbx_f1",
+    "name": "Financial_Model_v2.xlsx",
+    "path_lower": "/finance/financial_model_v2.xlsx",
+    "shared_users": [
+      "finance_lead@corp.com",
+      "cfo@corp.com"
+    ],
+    "team_shares": [
+      "finance-executives"
+    ],
+    "is_public": false,
+    "updated_at": "2026-09-21T09:00:00Z",
+    "created_at": "2026-09-01T08:00:00Z"
+  },
+  {
+    "id": "dbx_f2",
+    "name": "Company_Logos.zip",
+    "path_lower": "/branding/company_logos.zip",
+    "shared_users": [],
+    "team_shares": [
+      "all-employees"
+    ],
+    "is_public": true,
+    "updated_at": "2026-09-22T13:00:00Z",
+    "created_at": "2026-09-05T12:00:00Z"
+  }
+]

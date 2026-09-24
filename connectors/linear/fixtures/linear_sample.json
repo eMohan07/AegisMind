@@ -1,0 +1,24 @@
+[
+  {
+    "id": "lin_iss_1",
+    "identifier": "ENG-404",
+    "title": "Implement Reciprocal Rank Fusion constant k=60",
+    "team_id": "team_core",
+    "team_key": "ENG",
+    "assignee_id": "user_alice",
+    "state": "In Progress",
+    "updated_at": "2026-09-23T17:45:00Z",
+    "created_at": "2026-09-22T08:30:00Z"
+  },
+  {
+    "id": "lin_iss_2",
+    "identifier": "DES-12",
+    "title": "Dark mode design review",
+    "team_id": "team_design",
+    "team_key": "DES",
+    "assignee_id": "user_bob",
+    "state": "Done",
+    "updated_at": "2026-09-23T18:00:00Z",
+    "created_at": "2026-09-21T11:00:00Z"
+  }
+]

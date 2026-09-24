@@ -1,0 +1,31 @@
+[
+  {
+    "id": "slack_msg_101",
+    "channel_id": "C_GENERAL",
+    "channel_name": "general",
+    "is_private": false,
+    "user": "U_ALICE",
+    "text": "All hands meeting moved to 3 PM UTC.",
+    "members": [
+      "U_ALICE",
+      "U_BOB",
+      "U_CHARLIE"
+    ],
+    "updated_at": "2026-09-23T15:00:00Z",
+    "created_at": "2026-09-23T15:00:00Z"
+  },
+  {
+    "id": "slack_msg_102",
+    "channel_id": "C_EXEC_CONFIDENTIAL",
+    "channel_name": "exec-confidential",
+    "is_private": true,
+    "user": "U_BOB",
+    "text": "M&A review roadmap and term sheet draft.",
+    "members": [
+      "U_ALICE",
+      "U_BOB"
+    ],
+    "updated_at": "2026-09-23T16:00:00Z",
+    "created_at": "2026-09-23T16:00:00Z"
+  }
+]

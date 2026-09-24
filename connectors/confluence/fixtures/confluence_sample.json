@@ -1,0 +1,35 @@
+[
+  {
+    "id": "conf_p1",
+    "title": "Engineering Onboarding",
+    "space_key": "ENG",
+    "type": "page",
+    "body": "Welcome to engineering team onboarding.",
+    "restrictions": {
+      "users": [
+        "alice",
+        "bob"
+      ],
+      "groups": [
+        "engineering"
+      ]
+    },
+    "is_public": false,
+    "updated_at": "2026-09-20T10:00:00Z",
+    "created_at": "2026-09-01T08:00:00Z"
+  },
+  {
+    "id": "conf_p2",
+    "title": "Company Handbook",
+    "space_key": "ALL",
+    "type": "page",
+    "body": "General corporate policies and culture.",
+    "restrictions": {
+      "users": [],
+      "groups": []
+    },
+    "is_public": true,
+    "updated_at": "2026-09-21T12:00:00Z",
+    "created_at": "2026-09-01T08:00:00Z"
+  }
+]

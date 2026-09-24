@@ -59,6 +59,7 @@ select = ["E", "F", "I", "UP", "B", "ASYNC", "S"]
 [tool.ruff.lint.per-file-ignores]
 "tests/**" = ["S101", "S105", "S106"]
 "packages/**/tests/**" = ["S101", "S105", "S106"]
+"connectors/**/tests/**" = ["S101", "S105", "S106"]
 "**/verify/**" = ["S101"]
 "examples/**" = ["S101"]
 
@@ -83,6 +84,21 @@ pythonpath = [
     "packages/aegismind-ingestion/src",
     "packages/aegismind-mcp-bridge/src",
     "packages/aegismind-core/src",
+    "connectors/confluence/src",
+    "connectors/google_drive/src",
+    "connectors/jira/src",
+    "connectors/github/src",
+    "connectors/slack/src",
+    "connectors/notion/src",
+    "connectors/dropbox/src",
+    "connectors/gmail/src",
+    "connectors/linear/src",
+    "connectors/salesforce/src",
+    "connectors/sharepoint/src",
+    "connectors/teams/src",
+    "connectors/zendesk/src",
+    "connectors/granola/src",
+    "connectors/weblink/src",
 ]
 markers = [
     "permission: marks tests as permission verification tests",

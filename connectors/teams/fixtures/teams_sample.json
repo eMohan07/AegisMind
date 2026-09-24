@@ -1,0 +1,28 @@
+[
+  {
+    "id": "ms_teams_msg_1",
+    "team_id": "team_infra",
+    "channel_id": "chan_k8s",
+    "sender": "lead_architect",
+    "content": "Kubernetes cluster 1.31 upgrade scheduled for midnight.",
+    "members": [
+      "lead_architect",
+      "devops_engineer",
+      "sre_lead"
+    ],
+    "updated_at": "2026-09-23T19:00:00Z",
+    "created_at": "2026-09-23T19:00:00Z"
+  },
+  {
+    "id": "ms_teams_msg_2",
+    "team_id": "team_company",
+    "channel_id": "chan_townhall",
+    "sender": "ceo",
+    "content": "Townhall recording and presentation slides uploaded.",
+    "members": [
+      "all_members"
+    ],
+    "updated_at": "2026-09-23T20:00:00Z",
+    "created_at": "2026-09-23T20:00:00Z"
+  }
+]
