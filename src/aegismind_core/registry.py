@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import importlib.metadata
 import logging
-from typing import Any
+from typing import Any, cast
 
 logger = logging.getLogger(__name__)
 
@@ -78,7 +78,7 @@ def resolve_adapter(group: str, name: str) -> type[Any]:
                     name,
                     normalized_group,
                 )
-                return loaded_cls
+                return cast(type[Any], loaded_cls)
     except Exception as exc:
         logger.error(
             "Error loading entry point for group '%s', name '%s': %s",

@@ -9,18 +9,35 @@ build/
 *.egg-info/
 .eggs/
 
-# Unit test / coverage
-.pytest_cache/
-.coverage
-htmlcov/
-
-# Environments
+# Virtual environments
 .venv/
 env/
 venv/
 ENV/
+.uv/
 
-# IDE and OS
+# Testing and coverage
+.pytest_cache/
+.coverage
+htmlcov/
+.cache/
+
+# Type checking and linting
+.mypy_cache/
+.ruff_cache/
+
+# Environment variables and credentials
+.env
+.env.local
+.env.*.local
+*.pem
+*.key
+
+# Frontend / node artifacts
+node_modules/
+.npm/
+
+# IDE and operating system
 .idea/
 .vscode/
 *.swp
