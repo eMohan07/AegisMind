@@ -31,21 +31,35 @@ class DirectToolCallPayload(BaseModel):
 def create_mcp_router(
     pipeline: RetrievalPipeline | None = None,
     server: MCPBridgeServer | None = None,
+    state: Any | None = None,
 ) -> APIRouter:
     """Create FastAPI router for native Model Context Protocol integration."""
     router = APIRouter(prefix="/mcp", tags=["mcp"])
     bridge_server = server or MCPBridgeServer(name="aegismind-core-mcp")
 
-    if pipeline is not None:
+    if pipeline is not None or state is not None:
 
         async def _search_handler(args: dict[str, Any]) -> MCPToolCallResponse:
+            active_pipeline = pipeline or (
+                getattr(state, "retrieval_pipeline", None) if state else None
+            )
+            if active_pipeline is None:
+                return MCPToolCallResponse(
+                    content=[
+                        MCPContentItem(
+                            type="text",
+                            text="Retrieval pipeline is currently uninitialized.",
+                        )
+                    ],
+                    is_error=True,
+                )
             query = str(args.get("query", ""))
             top_k = int(args.get("top_k", 5))
             tenant_id = args.get("tenant_id")
             principal_id = str(args.get("principal_id", "mcp-user"))
 
             principal = Principal(id=principal_id, type="user", tenant_id=tenant_id)
-            res = await pipeline.execute(
+            res = await active_pipeline.execute(
                 query=query,
                 principal=principal,
                 top_k=top_k,

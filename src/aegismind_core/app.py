@@ -37,6 +37,21 @@ def create_app(state: CoreState | None = None) -> FastAPI:
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         logger.info("AegisMind Core application starting up")
+        if app_state.retrieval_pipeline is None:
+            try:
+                from aegismind_core.bootstrap import init_default_core_state
+
+                seeded_state = await init_default_core_state()
+                app_state.retrieval_pipeline = seeded_state.retrieval_pipeline
+                app_state.authz = seeded_state.authz
+                app_state.vector_store = seeded_state.vector_store
+                app_state.connectors = seeded_state.connectors
+                app_state.indexed_resources = seeded_state.indexed_resources
+                logger.info(
+                    "Default retrieval pipeline and enterprise corpus initialized successfully"
+                )
+            except Exception as exc:
+                logger.error("Failed to initialize default retrieval pipeline: %s", exc)
         yield
         logger.info("AegisMind Core application shutting down")
 
@@ -90,7 +105,7 @@ def create_app(state: CoreState | None = None) -> FastAPI:
     app.include_router(api_router)
 
     # Include MCP router
-    mcp_router = create_mcp_router(pipeline=app_state.retrieval_pipeline)
+    mcp_router = create_mcp_router(pipeline=app_state.retrieval_pipeline, state=app_state)
     app.include_router(mcp_router)
 
     # Initialize OpenTelemetry hooks

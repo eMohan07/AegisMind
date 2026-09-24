@@ -135,12 +135,11 @@ async def run_worker_daemon() -> None:
         format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
     )
     logger.info("AegisMind Scribe worker daemon initialized and listening for sync tasks.")
-    while True:
-        await asyncio.sleep(5)
+    stop_event = asyncio.Event()
+    await stop_event.wait()
 
 
 if __name__ == "__main__":
     import asyncio
 
     asyncio.run(run_worker_daemon())
-
