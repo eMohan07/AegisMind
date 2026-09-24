@@ -1,0 +1,119 @@
+# Default values for AegisMind Helm chart.
+# Declare variables to be passed into templates.
+
+global:
+  imageRegistry: ""
+  imagePullSecrets: []
+
+replicaCount:
+  agora: 2
+  scribe: 2
+  lens: 2
+
+images:
+  agora:
+    repository: aegismind/agora
+    tag: "0.1.0"
+    pullPolicy: IfNotPresent
+  scribe:
+    repository: aegismind/scribe
+    tag: "0.1.0"
+    pullPolicy: IfNotPresent
+  lens:
+    repository: aegismind/lens
+    tag: "0.1.0"
+    pullPolicy: IfNotPresent
+  spicedb:
+    repository: authzed/spicedb
+    tag: "v1.38.0"
+    pullPolicy: IfNotPresent
+  postgres:
+    repository: timescale/timescaledb-ha
+    tag: "pg17"
+    pullPolicy: IfNotPresent
+
+config:
+  env: production
+  tenantDefault: corp-default
+  spicedbEndpoint: "spicedb:50051"
+  teiEmbedderUrl: "http://tei-embedder:80"
+  teiRerankerUrl: "http://tei-reranker:80"
+  doclingUrl: "http://docling:5001"
+
+secrets:
+  databaseUrl: "postgresql://aegismind:aegismind_secure_password@postgres:5432/aegismind"
+  spicedbToken: "aegismind-spicedb-preshared-key"
+  masterKey: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+
+securityContext:
+  runAsNonRoot: true
+  runAsUser: 10001
+  runAsGroup: 10001
+  fsGroup: 10001
+
+containerSecurityContext:
+  readOnlyRootFilesystem: true
+  allowPrivilegeEscalation: false
+  capabilities:
+    drop:
+      - ALL
+
+service:
+  agora:
+    type: ClusterIP
+    port: 8000
+  lens:
+    type: ClusterIP
+    port: 80
+  spicedb:
+    type: ClusterIP
+    grpcPort: 50051
+    httpPort: 8443
+  postgres:
+    type: ClusterIP
+    port: 5432
+
+ingress:
+  enabled: true
+  className: "nginx"
+  annotations:
+    kubernetes.io/ingress.class: nginx
+    cert-manager.io/cluster-issuer: letsencrypt-prod
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "86400"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "86400"
+  hosts:
+    - host: aegismind.corp.net
+      paths:
+        - path: /
+          pathType: Prefix
+          backend: lens
+        - path: /api
+          pathType: Prefix
+          backend: agora
+  tls:
+    - secretName: aegismind-tls
+      hosts:
+        - aegismind.corp.net
+
+resources:
+  agora:
+    limits:
+      cpu: "4000m"
+      memory: "4Gi"
+    requests:
+      cpu: "500m"
+      memory: "512Mi"
+  scribe:
+    limits:
+      cpu: "4000m"
+      memory: "4Gi"
+    requests:
+      cpu: "500m"
+      memory: "512Mi"
+  lens:
+    limits:
+      cpu: "1000m"
+      memory: "512Mi"
+    requests:
+      cpu: "100m"
+      memory: "128Mi"

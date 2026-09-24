@@ -1,0 +1,18 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "aegismind.fullname" . }}-agora
+  labels:
+    {{- include "aegismind.labels" . | nindent 4 }}
+    app.kubernetes.io/component: agora
+spec:
+  type: {{ .Values.service.agora.type }}
+  ports:
+    - port: {{ .Values.service.agora.port }}
+      targetPort: http
+      protocol: TCP
+      name: http
+  selector:
+    app.kubernetes.io/name: {{ include "aegismind.name" . }}
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/component: agora

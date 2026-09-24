@@ -1,0 +1,61 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "aegismind.fullname" . }}-lens
+  labels:
+    {{- include "aegismind.labels" . | nindent 4 }}
+    app.kubernetes.io/component: lens
+spec:
+  replicas: {{ .Values.replicaCount.lens }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: {{ include "aegismind.name" . }}
+      app.kubernetes.io/instance: {{ .Release.Name }}
+      app.kubernetes.io/component: lens
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: {{ include "aegismind.name" . }}
+        app.kubernetes.io/instance: {{ .Release.Name }}
+        app.kubernetes.io/component: lens
+    spec:
+      securityContext:
+        {{- toYaml .Values.securityContext | nindent 8 }}
+      containers:
+        - name: lens
+          image: "{{ .Values.images.lens.repository }}:{{ .Values.images.lens.tag }}"
+          imagePullPolicy: {{ .Values.images.lens.pullPolicy }}
+          securityContext:
+            {{- toYaml .Values.containerSecurityContext | nindent 12 }}
+          ports:
+            - name: http
+              containerPort: 80
+              protocol: TCP
+          volumeMounts:
+            - name: cache
+              mountPath: /var/cache/nginx
+            - name: run
+              mountPath: /var/run
+            - name: tmp
+              mountPath: /tmp
+          resources:
+            {{- toYaml .Values.resources.lens | nindent 12 }}
+          livenessProbe:
+            httpGet:
+              path: /
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /
+              port: http
+            initialDelaySeconds: 2
+            periodSeconds: 5
+      volumes:
+        - name: cache
+          emptyDir: {}
+        - name: run
+          emptyDir: {}
+        - name: tmp
+          emptyDir: {}

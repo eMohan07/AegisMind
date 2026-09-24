@@ -1,0 +1,16 @@
+apiVersion: v2
+name: aegismind
+description: Production Helm chart for AegisMind enterprise access-controlled knowledge platform
+type: application
+version: 0.1.0
+appVersion: 0.1.0
+keywords:
+  - aegismind
+  - zanzibar
+  - search
+  - rag
+  - spicedb
+  - access-control
+maintainers:
+  - name: AegisMind Team
+    email: engineering@aegismind.io

@@ -1,0 +1,40 @@
+# Build Stage for AegisMind Scribe Ingestion Worker
+FROM python:3.12-slim AS builder
+
+WORKDIR /app
+
+ENV UV_COMPILE_BYTECODE=1 \
+    UV_LINK_MODE=copy \
+    PYTHONUNBUFFERED=1
+
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
+
+# Copy workspace project definitions
+COPY pyproject.toml uv.lock ./
+COPY packages ./packages
+COPY connectors ./connectors
+COPY src ./src
+
+# Synchronize dependencies
+RUN uv sync --frozen --no-dev
+
+# Production Runtime Stage
+FROM python:3.12-slim
+
+WORKDIR /app
+
+# Create unprivileged runtime user
+RUN useradd -u 10001 -r -s /bin/false aegismind
+
+COPY --from=builder /app/.venv /app/.venv
+COPY --from=builder /app/packages /app/packages
+COPY --from=builder /app/connectors /app/connectors
+COPY --from=builder /app/src /app/src
+
+ENV PATH="/app/.venv/bin:$PATH" \
+    PYTHONPATH="/app/packages/aegismind-ingestion/src:/app/packages/aegismind-types/src:/app/packages/aegismind-authz/src:/app/packages/aegismind-connector-sdk/src:/app/packages/aegismind-infra/src:/app/packages/aegismind-identity/src:/app/packages/aegismind-retrieval/src:/app/packages/aegismind-mcp-bridge/src" \
+    PYTHONUNBUFFERED=1
+
+USER aegismind
+
+CMD ["python", "-m", "aegismind_ingestion.worker"]
