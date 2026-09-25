@@ -29,6 +29,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field
 
 from aegismind_core.adapters.llm import get_llm_adapter
+from aegismind_core.budgeting import apply_context_budget
 from aegismind_core.observability import trace_span
 from aegismind_core.ports.llm import LLMPort
 
@@ -345,35 +346,34 @@ def create_routes(state: CoreState) -> APIRouter:
                     top_k=top_k,
                 )
 
-            # Stage 2: Formulate prompt for Ollama and fallback synthesis
-            if res.results:
-                primary = res.results[0]
+            # Stage 2: Token budgeting and prompt formulation
+            llm_adapter = state.llm or get_llm_adapter()
+            budget_res = apply_context_budget(
+                query=query,
+                results=res.results,
+                llm=llm_adapter,
+                model=model,
+            )
+            surviving_results = budget_res.chunks
+            trim_notice = budget_res.notice
+
+            if surviving_results:
+                primary = surviving_results[0]
                 answer_parts = [
                     f"Based on verified access-controlled documents for {effective_principal_id}:",
                     primary.text,
                 ]
-                if len(res.results) > 1:
+                if len(surviving_results) > 1:
                     additional_insights = [
                         f"{r.title}: {r.text}"
-                        for r in res.results[1:3]
+                        for r in surviving_results[1:3]
                         if r.document_id != primary.document_id
                     ]
                     if additional_insights:
                         answer_parts.append("Additional context: " + " ".join(additional_insights))
                 fallback_answer_text = "\n\n".join(answer_parts)
-
-                context_docs = "\n\n".join(
-                    f"[Document: {r.title} (URI: {r.uri})]\n{r.text}" for r in res.results[:5]
-                )
-                system_prompt = (
-                    "You are AegisMind, an enterprise AI assistant with Zanzibar-enforced "
-                    "access control.\n"
-                    "Answer the user's question clearly, thoroughly, and accurately based on "
-                    "the verified documents provided below.\n"
-                    "Cite the relevant documents where appropriate, and answer all parts of "
-                    "the user's question."
-                )
-                prompt = f"VERIFIED CONTEXT:\n{context_docs}\n\nUSER QUESTION:\n{query}"
+                prompt = budget_res.prompt
+                system_prompt = budget_res.system_prompt
             elif res.total_candidates_evaluated > 0 and res.authorized_candidates_count == 0:
                 fallback_answer_text = (
                     f"Access denied: Relevant candidate documents matched query '{query}', but "
@@ -403,7 +403,6 @@ def create_routes(state: CoreState) -> APIRouter:
             # Stage 3: Stream tokens from LLMPort with fallback
             llm_streamed = False
             try:
-                llm_adapter = state.llm or get_llm_adapter()
                 async for token in llm_adapter.stream_generate(
                     prompt=prompt,
                     system_prompt=system_prompt,
@@ -423,17 +422,24 @@ def create_routes(state: CoreState) -> APIRouter:
                     yield f"event: token\ndata: {data}\n\n"
                     await asyncio.sleep(0.015)
 
-            # Stage 3: Stream citations (both array and individual items for maximum compatibility)
-            citations = [r.citation.model_dump() for r in res.results if r.citation]
+            # If chunks were dropped due to context limits, append notice to stream
+            if trim_notice:
+                notice_data = json.dumps({"token": f"\n\n{trim_notice}"})
+                yield f"event: token\ndata: {notice_data}\n\n"
+
+            # Stage 4: Stream citations for surviving chunks
+            citations = [r.citation.model_dump() for r in surviving_results if r.citation]
             yield f"event: citations\ndata: {json.dumps(citations)}\n\n"
             for c in citations:
                 yield f"event: citation\ndata: {json.dumps(c)}\n\n"
 
-            # Stage 4: Stream done event
+            # Stage 5: Stream done event with dynamically updated top_k
             done_payload = json.dumps(
                 {
                     "status": "completed",
                     "citations_count": len(citations),
+                    "top_k": len(surviving_results),
+                    "notice": trim_notice,
                 }
             )
             yield f"event: done\ndata: {done_payload}\n\n"
