@@ -164,7 +164,8 @@ class OllamaQueryRewriterAdapter:
                 )
                 if resp.status_code == 200:
                     data = resp.json()
-                    rewritten = str(data.get("response", "")).strip() if isinstance(data, dict) else ""
+                    val = data.get("response", "") if isinstance(data, dict) else ""
+                    rewritten = str(val).strip()
                     if rewritten:
                         return rewritten
             except Exception as exc:
