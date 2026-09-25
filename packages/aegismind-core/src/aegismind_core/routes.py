@@ -8,11 +8,12 @@ from collections.abc import AsyncIterator
 from datetime import UTC, datetime
 from typing import Any, Literal
 
-from aegismind_authz.ports import AuthzPort, RelationshipTuple
+from aegismind_authz.ports import AuthzPort, CheckRequest, RelationshipTuple
 from aegismind_connector_sdk.ports import ConnectorPort, ConnectorSpec
 from aegismind_infra.ports import SecretStorePort
 from aegismind_infra.secrets import MemorySecretStore
-from aegismind_ingestion.ports import IngestionPipelinePort
+from aegismind_ingestion.dlq import MemoryDLQAdapter
+from aegismind_ingestion.ports import DLQPort, IngestionPipelinePort
 from aegismind_ingestion.worker import ScribeSyncReport, ScribeWorker
 from aegismind_retrieval.adapters_vector import MemoryVectorStoreAdapter
 from aegismind_retrieval.pipeline import PipelineResult, RetrievalPipeline
@@ -152,6 +153,7 @@ class CoreState:
         ingestion_pipeline: IngestionPipelinePort | None = None,
         secret_store: SecretStorePort | None = None,
         llm: LLMPort | None = None,
+        dlq: DLQPort | None = None,
     ) -> None:
         self.retrieval_pipeline = retrieval_pipeline
         self.authz = authz
@@ -159,8 +161,9 @@ class CoreState:
         self.ingestion_pipeline = ingestion_pipeline
         self.secret_store = secret_store or MemorySecretStore()
         self.llm = llm
+        self.dlq = dlq or MemoryDLQAdapter()
         self.scribe_worker = (
-            ScribeWorker(pipeline=ingestion_pipeline) if ingestion_pipeline else None
+            ScribeWorker(pipeline=ingestion_pipeline, dlq=self.dlq) if ingestion_pipeline else None
         )
 
         self.connectors: dict[str, ConnectorPort] = {}
@@ -809,4 +812,170 @@ def create_routes(state: CoreState) -> APIRouter:
             media_type="text/plain; version=0.0.4; charset=utf-8",
         )
 
+    # 14. GET /api/v1/health: Liveness probe
+    @router.get("/health", tags=["health"])
+    async def liveness_probe() -> dict[str, str]:
+        """Liveness probe: verifies process is alive and accepting traffic."""
+        return {"status": "ok", "service": "aegismind-core"}
+
+    # 15. GET /api/v1/readiness: Deep readiness probe
+    @router.get("/readiness", tags=["health"])
+    async def readiness_probe(response: Response) -> dict[str, Any]:
+        """Deep readiness probe: checks backing store, SpiceDB, TEI, and LLM."""
+        is_ready, checks = await perform_readiness_check(state)
+        if not is_ready:
+            response.status_code = status.HTTP_503_SERVICE_UNAVAILABLE
+            return {"status": "unhealthy", "checks": checks}
+        return {"status": "ready", "checks": checks}
+
+    # 16. Dead-Letter Queue (DLQ) endpoints
+    @router.get("/dlq", tags=["dlq"])
+    async def list_dlq(
+        connector_id: str | None = Query(None, description="Filter by connector ID"),
+        status: str | None = Query(
+            None, description="Filter by status (pending, retried, resolved, abandoned)"
+        ),
+        limit: int = Query(50, ge=1, le=500, description="Max items to retrieve"),
+    ) -> dict[str, Any]:
+        """Query dead-letter queue items."""
+        items = await state.dlq.list_items(connector_id=connector_id, status=status, limit=limit)
+        return {
+            "total": len(items),
+            "limit": limit,
+            "items": [item.model_dump() for item in items],
+        }
+
+    @router.post("/dlq/{item_id}/retry", tags=["dlq"])
+    async def retry_dlq_item(item_id: str) -> dict[str, Any]:
+        """Trigger reprocessing attempt for a dead-letter queue item."""
+        existing = await state.dlq.get_item(item_id)
+        if not existing:
+            raise HTTPException(status_code=404, detail=f"DLQ item '{item_id}' not found")
+        updated = await state.dlq.update_status(item_id, status="retried")
+        state.record_audit(
+            event_type="dlq",
+            principal_id="system",
+            action="dlq_retry",
+            resource_id=item_id,
+            metadata={
+                "connector_id": existing.connector_id,
+                "retry_count": updated.retry_count if updated else 0,
+            },
+        )
+        return {
+            "status": "retried",
+            "item": updated.model_dump() if updated else None,
+        }
+
+    @router.delete("/dlq/{item_id}", tags=["dlq"])
+    async def delete_dlq_item(item_id: str) -> dict[str, Any]:
+        """Purge or acknowledge a dead-letter queue item."""
+        deleted = await state.dlq.delete_item(item_id)
+        if not deleted:
+            raise HTTPException(status_code=404, detail=f"DLQ item '{item_id}' not found")
+        return {"status": "deleted", "id": item_id}
+
     return router
+
+
+async def perform_readiness_check(state: CoreState) -> tuple[bool, dict[str, str]]:
+    """Execute deep readiness checks across all backing services."""
+    checks: dict[str, str] = {}
+    all_ok = True
+
+    # 1. PostgreSQL vector store ping
+    try:
+        vs = state.vector_store
+        if hasattr(vs, "db_pool") and vs.db_pool is not None:
+            async with vs.db_pool.acquire() as conn:
+                await conn.fetchval("SELECT 1")
+            checks["vector_store"] = "ok"
+        elif hasattr(vs, "ping"):
+            await vs.ping()
+            checks["vector_store"] = "ok"
+        else:
+            checks["vector_store"] = "ok (in-memory)"
+    except Exception as exc:
+        logger.warning("Readiness probe: vector store check failed: %s", exc)
+        checks["vector_store"] = f"error: {exc}"
+        all_ok = False
+
+    # 2. SpiceDB bulk_check or check_permission on sentinel resource
+    try:
+        az = state.authz
+        if az is not None:
+            if hasattr(az, "bulk_check"):
+                sentinel_req = CheckRequest(
+                    resource="resource:system#sentinel",
+                    permission="viewer",
+                    subject="user:healthcheck",
+                )
+                await az.bulk_check([sentinel_req])
+                checks["authz"] = "ok"
+            elif hasattr(az, "check_permission"):
+                sentinel_principal = Principal(id="healthcheck", type="user")
+                await az.check_permission(
+                    subject=sentinel_principal,
+                    relation="viewer",
+                    resource="resource:system#sentinel",
+                )
+                checks["authz"] = "ok"
+            else:
+                checks["authz"] = "ok (adapter)"
+        else:
+            checks["authz"] = "disabled"
+    except Exception as exc:
+        logger.warning("Readiness probe: SpiceDB check failed: %s", exc)
+        checks["authz"] = f"error: {exc}"
+        all_ok = False
+
+    # 3. TEI embedder ping
+    try:
+        pipe = state.retrieval_pipeline
+        if pipe and pipe.embedder:
+            if hasattr(pipe.embedder, "ping"):
+                await pipe.embedder.ping()
+                checks["embedder"] = "ok"
+            else:
+                await pipe.embedder.embed_query("ping")
+                checks["embedder"] = "ok"
+        else:
+            checks["embedder"] = "disabled"
+    except Exception as exc:
+        logger.warning("Readiness probe: embedder check failed: %s", exc)
+        checks["embedder"] = f"error: {exc}"
+        all_ok = False
+
+    # 4. TEI reranker ping
+    try:
+        pipe = state.retrieval_pipeline
+        if pipe and pipe.reranker:
+            if hasattr(pipe.reranker, "ping"):
+                await pipe.reranker.ping()
+                checks["reranker"] = "ok"
+            else:
+                await pipe.reranker.rerank(query="ping", candidates=[], top_n=0)
+                checks["reranker"] = "ok"
+        else:
+            checks["reranker"] = "disabled"
+    except Exception as exc:
+        logger.warning("Readiness probe: reranker check failed: %s", exc)
+        checks["reranker"] = f"error: {exc}"
+        all_ok = False
+
+    # 5. LLM provider check
+    try:
+        if state.llm is not None:
+            if hasattr(state.llm, "health_check"):
+                ok = await state.llm.health_check()
+                checks["llm"] = "ok" if ok else "degraded"
+            else:
+                checks["llm"] = "ok"
+        else:
+            checks["llm"] = "disabled"
+    except Exception as exc:
+        logger.warning("Readiness probe: LLM check failed: %s", exc)
+        checks["llm"] = f"error: {exc}"
+
+    return all_ok, checks
+

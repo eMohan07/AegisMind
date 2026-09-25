@@ -11,6 +11,7 @@ from aegismind_types import Chunk, Document, Record
 from aegismind_ingestion.chunking import SectionAwareChunker
 from aegismind_ingestion.ports import (
     ChunkerPort,
+    DLQPort,
     IngestionPipelinePort,
     IngestionSummary,
     ParserPort,
@@ -31,6 +32,7 @@ class IngestionPipeline(IngestionPipelinePort):
         authz: AuthzPort,
         chunker: ChunkerPort | None = None,
         sanitizer: IngestionSanitizer | None = None,
+        dlq: DLQPort | None = None,
     ) -> None:
         self.parser = parser
         self.vector_store = vector_store
@@ -38,6 +40,7 @@ class IngestionPipeline(IngestionPipelinePort):
         self.authz = authz
         self.chunker = chunker or SectionAwareChunker()
         self.sanitizer = sanitizer or IngestionSanitizer()
+        self.dlq = dlq
 
     async def ingest_records(self, records: list[Record]) -> IngestionSummary:
         """Process a batch of raw records through the ingestion lifecycle.
@@ -67,6 +70,16 @@ class IngestionPipeline(IngestionPipelinePort):
                 err_msg = f"Failed to parse record {record.id}: {exc}"
                 logger.error(err_msg)
                 errors.append(err_msg)
+                if self.dlq is not None:
+                    try:
+                        await self.dlq.enqueue(
+                            connector_id=record.source or "unknown",
+                            resource_id=record.id,
+                            error_message=err_msg,
+                            payload=record.payload if hasattr(record, "payload") else {},
+                        )
+                    except Exception as dlq_exc:
+                        logger.warning("Failed enqueueing parse failure to DLQ: %s", dlq_exc)
 
         # 2. Write SpiceDB tuples first so permissions are active before chunks become searchable
         for doc in documents:
@@ -167,6 +180,16 @@ class IngestionPipeline(IngestionPipelinePort):
                 err_msg = f"Failed chunking/versioning document {doc.id}: {exc}"
                 logger.error(err_msg)
                 errors.append(err_msg)
+                if self.dlq is not None:
+                    try:
+                        await self.dlq.enqueue(
+                            connector_id=doc.metadata.get("source") or "unknown",
+                            resource_id=doc.id,
+                            error_message=err_msg,
+                            payload={"title": doc.title, "document_id": doc.id},
+                        )
+                    except Exception as dlq_exc:
+                        logger.warning("Failed enqueueing chunking failure to DLQ: %s", dlq_exc)
 
         # 4. Generate embeddings only for newly created or modified chunks
         if chunks_to_embed:
@@ -203,6 +226,22 @@ class IngestionPipeline(IngestionPipelinePort):
                 err_msg = f"Failed during embedding generation: {exc}"
                 logger.error(err_msg)
                 errors.append(err_msg)
+                if self.dlq is not None:
+                    for pending, _, _ in chunks_to_embed:
+                        try:
+                            await self.dlq.enqueue(
+                                connector_id=pending.metadata.get("source") or "unknown",
+                                resource_id=pending.id,
+                                error_message=err_msg,
+                                payload={
+                                    "content": pending.content,
+                                    "document_id": pending.document_id,
+                                },
+                            )
+                        except Exception as dlq_exc:
+                            logger.warning(
+                                "Failed enqueueing embedding failure to DLQ: %s", dlq_exc
+                            )
 
         # 5. Atomically soft-delete old document chunks and index new versioned chunks
         for doc in documents:
@@ -221,6 +260,20 @@ class IngestionPipeline(IngestionPipelinePort):
                 err_msg = f"Failed indexing chunks into vector store: {exc}"
                 logger.error(err_msg)
                 errors.append(err_msg)
+                if self.dlq is not None:
+                    for chunk_item in prepared_chunks:
+                        try:
+                            await self.dlq.enqueue(
+                                connector_id=chunk_item.metadata.get("source") or "unknown",
+                                resource_id=chunk_item.id,
+                                error_message=err_msg,
+                                payload={
+                                    "content": chunk_item.content,
+                                    "document_id": chunk_item.document_id,
+                                },
+                            )
+                        except Exception as dlq_exc:
+                            logger.warning("Failed enqueueing upsert failure to DLQ: %s", dlq_exc)
 
         return IngestionSummary(
             records_ingested=total_records,

@@ -1,60 +1,75 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: {{ include "aegismind.fullname" . }}-agora
+  name: aegismind-agora
+  namespace: aegismind
   labels:
-    {{- include "aegismind.labels" . | nindent 4 }}
+    app.kubernetes.io/name: aegismind
     app.kubernetes.io/component: agora
 spec:
-  replicas: {{ .Values.replicaCount.agora }}
+  replicas: 2
   selector:
     matchLabels:
-      app.kubernetes.io/name: {{ include "aegismind.name" . }}
-      app.kubernetes.io/instance: {{ .Release.Name }}
+      app.kubernetes.io/name: aegismind
       app.kubernetes.io/component: agora
   template:
     metadata:
       labels:
-        app.kubernetes.io/name: {{ include "aegismind.name" . }}
-        app.kubernetes.io/instance: {{ .Release.Name }}
+        app.kubernetes.io/name: aegismind
         app.kubernetes.io/component: agora
     spec:
       securityContext:
-        {{- toYaml .Values.securityContext | nindent 8 }}
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        fsGroup: 10001
       containers:
         - name: agora
-          image: "{{ .Values.images.agora.repository }}:{{ .Values.images.agora.tag }}"
-          imagePullPolicy: {{ .Values.images.agora.pullPolicy }}
+          image: aegismind/agora:latest
+          imagePullPolicy: IfNotPresent
           securityContext:
-            {{- toYaml .Values.containerSecurityContext | nindent 12 }}
+            readOnlyRootFilesystem: true
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
           ports:
             - name: http
               containerPort: 8000
               protocol: TCP
           envFrom:
             - configMapRef:
-                name: {{ include "aegismind.fullname" . }}-config
+                name: aegismind-config
             - secretRef:
-                name: {{ include "aegismind.fullname" . }}-secrets
+                name: aegismind-secrets
           volumeMounts:
             - name: tmp
               mountPath: /tmp
             - name: run
               mountPath: /run
           resources:
-            {{- toYaml .Values.resources.agora | nindent 12 }}
+            requests:
+              cpu: 500m
+              memory: 1Gi
+            limits:
+              cpu: 2000m
+              memory: 4Gi
           livenessProbe:
             httpGet:
               path: /health
               port: http
             initialDelaySeconds: 15
             periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 3
           readinessProbe:
             httpGet:
               path: /readiness
               port: http
             initialDelaySeconds: 5
             periodSeconds: 5
+            timeoutSeconds: 5
+            failureThreshold: 3
       volumes:
         - name: tmp
           emptyDir: {}

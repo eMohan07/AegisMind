@@ -61,9 +61,7 @@ class SpiceDBWatcher:
             from authzed.api.v1 import WatchRequest, ZedToken
 
             cursor_token = (
-                ZedToken(token=start_cursor.token)
-                if start_cursor and start_cursor.token
-                else None
+                ZedToken(token=start_cursor.token) if start_cursor and start_cursor.token else None
             )
             req = WatchRequest(optional_start_cursor=cursor_token)
 

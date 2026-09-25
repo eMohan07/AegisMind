@@ -1,0 +1,98 @@
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: agora-network-policy
+  namespace: aegismind
+  labels:
+    app.kubernetes.io/name: aegismind
+    app.kubernetes.io/component: agora
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: aegismind
+      app.kubernetes.io/component: agora
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    # Strict Ingress: Only from Ingress Controller / Gateway or internal UI frontend (Lens)
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: ingress-nginx
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: traefik
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/component: lens
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/component: gateway
+      ports:
+        - protocol: TCP
+          port: 8000
+  egress:
+    # 1. DNS Resolution (CoreDNS in kube-system)
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+
+    # 2. Backing Database: PostgreSQL vector store
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/component: postgres
+      ports:
+        - protocol: TCP
+          port: 5432
+
+    # 3. Authorization Engine: SpiceDB gRPC
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/component: spicedb
+      ports:
+        - protocol: TCP
+          port: 50051
+
+    # 4. Neural Models: TEI Embedder and Reranker
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/component: tei-embedder
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/component: tei-reranker
+      ports:
+        - protocol: TCP
+          port: 80
+        - protocol: TCP
+          port: 8080
+
+    # 5. Document Parsing: Docling Service
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/component: docling
+      ports:
+        - protocol: TCP
+          port: 5001
+
+    # 6. LLM Providers: Local Ollama daemon or External Hosted LLMs (HTTPS)
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/component: ollama
+      ports:
+        - protocol: TCP
+          port: 11434
+    - ports:
+        - protocol: TCP
+          port: 443

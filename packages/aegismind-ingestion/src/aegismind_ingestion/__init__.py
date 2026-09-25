@@ -9,9 +9,12 @@ from aegismind_ingestion.chunking import (
     ContextualRetrievalGenerator,
     SectionAwareChunker,
 )
+from aegismind_ingestion.dlq import MemoryDLQAdapter, PgDLQAdapter
 from aegismind_ingestion.pipeline import IngestionPipeline
 from aegismind_ingestion.ports import (
     ChunkerPort,
+    DLQItem,
+    DLQPort,
     IngestionPipelinePort,
     IngestionSummary,
     ParserPort,
@@ -26,13 +29,17 @@ from aegismind_ingestion.workflow_dbos import (
 __all__ = [
     "ChunkerPort",
     "ContextualRetrievalGenerator",
+    "DLQItem",
+    "DLQPort",
     "DoclingParserAdapter",
     "DurableWorkflowEngine",
     "IngestionPipeline",
     "IngestionPipelinePort",
     "IngestionSummary",
     "MarkdownParserAdapter",
+    "MemoryDLQAdapter",
     "ParserPort",
+    "PgDLQAdapter",
     "ScribeSyncReport",
     "ScribeWorker",
     "SectionAwareChunker",

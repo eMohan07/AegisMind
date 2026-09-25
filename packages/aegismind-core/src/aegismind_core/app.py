@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from typing import Any
 
 from fastapi import FastAPI, Request, Response, status
 from fastapi.middleware.cors import CORSMiddleware
@@ -111,13 +112,24 @@ def create_app(state: CoreState | None = None) -> FastAPI:
         )
 
     # Liveness and readiness probes
+    @app.get("/health", tags=["health"])
     @app.get("/healthz", tags=["health"])
     async def health_check() -> dict[str, str]:
         return {"status": "ok", "service": "aegismind-core"}
 
     @app.get("/readyz", tags=["health"])
-    async def readiness_check() -> dict[str, str]:
+    async def legacy_readiness_check() -> dict[str, str]:
         return {"status": "ready", "service": "aegismind-core"}
+
+    @app.get("/readiness", tags=["health"])
+    async def deep_readiness_check(response: Response) -> dict[str, Any]:
+        from aegismind_core.routes import perform_readiness_check
+
+        is_ready, checks = await perform_readiness_check(app_state)
+        if not is_ready:
+            response.status_code = status.HTTP_503_SERVICE_UNAVAILABLE
+            return {"status": "unhealthy", "checks": checks}
+        return {"status": "ready", "checks": checks}
 
     # Include API routes
     api_router = create_routes(app_state)

@@ -84,10 +84,30 @@ CREATE TABLE IF NOT EXISTS aegismind_feedback (
 CREATE INDEX IF NOT EXISTS idx_feedback_tenant 
     ON aegismind_feedback(tenant_id);
 
+-- Dead Letter Queue storage table for failed ingestion processing
+CREATE TABLE IF NOT EXISTS aegismind_dlq (
+    id VARCHAR(128) PRIMARY KEY,
+    connector_id VARCHAR(64) NOT NULL,
+    resource_id VARCHAR(512) NOT NULL,
+    error_message TEXT NOT NULL,
+    payload JSONB NOT NULL DEFAULT '{}'::jsonb,
+    retry_count INT NOT NULL DEFAULT 0,
+    status VARCHAR(32) NOT NULL DEFAULT 'pending',
+    created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    last_failed_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_dlq_status
+    ON aegismind_dlq(status, last_failed_at);
+
+CREATE INDEX IF NOT EXISTS idx_dlq_connector
+    ON aegismind_dlq(connector_id);
+
 -- PostgreSQL Row Level Security (RLS) policies for multi-tenancy defense in depth
 ALTER TABLE aegismind_chunks ENABLE ROW LEVEL SECURITY;
 ALTER TABLE aegismind_records ENABLE ROW LEVEL SECURITY;
 ALTER TABLE aegismind_feedback ENABLE ROW LEVEL SECURITY;
+ALTER TABLE aegismind_dlq ENABLE ROW LEVEL SECURITY;
 
 DO $$ 
 BEGIN

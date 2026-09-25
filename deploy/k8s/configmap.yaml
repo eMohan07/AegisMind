@@ -1,0 +1,20 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: aegismind-config
+  namespace: aegismind
+  labels:
+    app.kubernetes.io/name: aegismind
+    app.kubernetes.io/component: config
+data:
+  AEGISMIND_ENV: "production"
+  TENANT_DEFAULT: "corp-default"
+  SPICEDB_ENDPOINT: "spicedb.aegismind.svc.cluster.local:50051"
+  TEI_EMBEDDER_URL: "http://tei-embedder.aegismind.svc.cluster.local:80"
+  TEI_RERANKER_URL: "http://tei-reranker.aegismind.svc.cluster.local:80"
+  DOCLING_URL: "http://docling.aegismind.svc.cluster.local:5001"
+  OLLAMA_URL: "http://ollama.aegismind.svc.cluster.local:11434"
+  OLLAMA_MODEL: "llama3.2:latest"
+  DATABASE_URL: "postgresql+psycopg://aegismind@postgres.aegismind.svc.cluster.local:5432/aegismind"
+  OTEL_SERVICE_NAME: "agora"
+  OTEL_TRACES_SAMPLER: "parentbased_always_on"

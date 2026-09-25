@@ -1,0 +1,18 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: aegismind-agora
+  namespace: aegismind
+  labels:
+    app.kubernetes.io/name: aegismind
+    app.kubernetes.io/component: agora
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: aegismind
+    app.kubernetes.io/component: agora
+  ports:
+    - name: http
+      port: 8000
+      targetPort: http
+      protocol: TCP

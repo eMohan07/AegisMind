@@ -7,7 +7,11 @@ from aegismind_connector_sdk.ports import ConnectorPort
 from aegismind_types import Record
 from pydantic import BaseModel, ConfigDict, Field
 
-from aegismind_ingestion.ports import IngestionPipelinePort, IngestionSummary
+from aegismind_ingestion.ports import (
+    DLQPort,
+    IngestionPipelinePort,
+    IngestionSummary,
+)
 from aegismind_ingestion.workflow_dbos import DurableWorkflowEngine
 
 logger = logging.getLogger(__name__)
@@ -35,10 +39,12 @@ class ScribeWorker:
         pipeline: IngestionPipelinePort,
         workflow_engine: DurableWorkflowEngine | None = None,
         batch_size: int = 50,
+        dlq: DLQPort | None = None,
     ) -> None:
         self.pipeline = pipeline
         self.workflow_engine = workflow_engine or DurableWorkflowEngine()
         self.batch_size = batch_size
+        self.dlq = dlq
 
     async def run_sync(
         self,
