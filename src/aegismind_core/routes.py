@@ -8,7 +8,7 @@ from collections.abc import AsyncIterator
 from datetime import UTC, datetime
 from typing import Any, Literal
 
-from aegismind_authz.ports import AuthzPort
+from aegismind_authz.ports import AuthzPort, RelationshipTuple
 from aegismind_connector_sdk.ports import ConnectorPort, ConnectorSpec
 from aegismind_infra.ports import SecretStorePort
 from aegismind_infra.secrets import MemorySecretStore
@@ -18,16 +18,52 @@ from aegismind_retrieval.adapters_vector import MemoryVectorStoreAdapter
 from aegismind_retrieval.pipeline import PipelineResult, RetrievalPipeline
 from aegismind_retrieval.ports import VectorStorePort
 from aegismind_types import (
+    ACL,
+    ChatTurn,
+    Chunk,
+    FeedbackEntry,
     Principal,
 )
 from fastapi import APIRouter, HTTPException, Query, status
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field
 
+from aegismind_core.ollama import list_available_models, stream_ollama_completion
+
 logger = logging.getLogger(__name__)
 
 
 # --- Domain Models for API ---
+
+
+class FeedbackCreateRequest(BaseModel):
+    """Payload for submitting user thumbs up/down feedback."""
+
+    model_config = ConfigDict(frozen=True)
+
+    query: str = Field(..., description="Query submitted")
+    rewritten_query: str | None = Field(default=None, description="Rewritten query string")
+    retrieved_chunk_ids: list[str] = Field(default_factory=list, description="IDs of cited chunks")
+    rating: Literal["thumbs_up", "thumbs_down"] = Field(..., description="User rating")
+    comment: str | None = Field(default=None, description="Optional feedback note")
+    tenant_id: str | None = Field(default=None, description="Tenant boundary")
+
+
+class IngestDocumentRequest(BaseModel):
+    """Payload for ingesting custom documents or datasets with access control."""
+
+    model_config = ConfigDict(frozen=True)
+
+    title: str = Field(..., description="Document or dataset title")
+    content: str = Field(..., description="Text content or dataset records")
+    document_id: str | None = Field(default=None, description="Optional custom document ID")
+    tenant_id: str = Field(default="corp-default", description="Tenant boundary")
+    allowed_users: list[str] = Field(
+        default_factory=lambda: ["alice", "bob"],
+        description="Users granted viewer permission",
+    )
+    uri: str | None = Field(default=None, description="Optional source link or URI")
+    metadata: dict[str, Any] = Field(default_factory=dict)
 
 
 class SearchApiRequest(BaseModel):
@@ -43,7 +79,13 @@ class SearchApiRequest(BaseModel):
     attributes: dict[str, Any] = Field(default_factory=dict)
     top_k: int = Field(default=10, ge=1, le=100)
     limit: int | None = Field(default=None, description="Alias for top_k")
-    overfetch_factor: float = Field(default=4.0, ge=3.0, le=5.0)
+    overfetch_factor: float | None = Field(default=None, ge=3.0, le=5.0)
+    query_type: str = Field(
+        default="factual", description="Query type (factual, navigational, exploratory)"
+    )
+    chat_history: list[dict[str, str]] | list[ChatTurn] | None = None
+    apply_mmr: bool = Field(default=True, description="Apply MMR diversity reordering")
+    mmr_lambda: float = Field(default=0.7, ge=0.0, le=1.0)
     sparse_query: dict[int, float] | None = None
     pre_filter: dict[str, Any] | None = None
 
@@ -120,6 +162,7 @@ class CoreState:
         self.group_aliases: dict[str, str] = {}
         self.audit_log: list[AuditLogEntry] = []
         self.indexed_resources: list[dict[str, Any]] = []
+        self.feedback_entries: list[FeedbackEntry] = []
 
     def record_audit(
         self,
@@ -177,14 +220,24 @@ def create_routes(state: CoreState) -> APIRouter:
             attributes=req.attributes,
         )
 
+        parsed_history: list[ChatTurn] | None = None
+        if req.chat_history:
+            parsed_history = [
+                t if isinstance(t, ChatTurn) else ChatTurn(**t) for t in req.chat_history
+            ]
+
         try:
             result = await pipeline.execute(
                 query=req.query,
                 principal=principal,
+                chat_history=parsed_history,
+                query_type=req.query_type,
                 sparse_query=req.sparse_query,
                 pre_filter=req.pre_filter,
                 top_k=effective_top_k,
                 overfetch_factor=req.overfetch_factor,
+                apply_mmr=req.apply_mmr,
+                mmr_lambda=req.mmr_lambda,
             )
 
             state.record_audit(
@@ -193,8 +246,11 @@ def create_routes(state: CoreState) -> APIRouter:
                 action="search_query",
                 metadata={
                     "query": req.query,
+                    "rewritten_query": result.rewritten_query,
+                    "query_type": req.query_type,
                     "top_k": effective_top_k,
                     "results_count": len(result.results),
+                    "deny_rate": result.deny_rate,
                 },
             )
             return result
@@ -212,6 +268,7 @@ def create_routes(state: CoreState) -> APIRouter:
         principal_id: str = Query("anonymous", description="Principal ID"),
         user_id: str | None = Query(None, description="Alias for principal_id"),
         tenant_id: str | None = Query(None, description="Tenant ID"),
+        model: str | None = Query(None, description="Ollama model for answer generation"),
         top_k: int = Query(5, ge=1, le=20),
     ) -> StreamingResponse:
         pipeline = state.retrieval_pipeline
@@ -242,7 +299,7 @@ def create_routes(state: CoreState) -> APIRouter:
                 event_type="chat",
                 principal_id=effective_principal_id,
                 action="chat_sse_stream",
-                metadata={"query": query},
+                metadata={"query": query, "model": model},
             )
 
             # Stage 0: Thinking progress indications
@@ -265,7 +322,7 @@ def create_routes(state: CoreState) -> APIRouter:
                 top_k=top_k,
             )
 
-            # Stage 2: Intelligent synthesis grounded in authorized search results
+            # Stage 2: Formulate prompt for Ollama and fallback synthesis
             if res.results:
                 primary = res.results[0]
                 answer_parts = [
@@ -280,26 +337,67 @@ def create_routes(state: CoreState) -> APIRouter:
                     ]
                     if additional_insights:
                         answer_parts.append("Additional context: " + " ".join(additional_insights))
-                answer_text = "\n\n".join(answer_parts)
+                fallback_answer_text = "\n\n".join(answer_parts)
+
+                context_docs = "\n\n".join(
+                    f"[Document: {r.title} (URI: {r.uri})]\n{r.text}" for r in res.results[:5]
+                )
+                system_prompt = (
+                    "You are AegisMind, an enterprise AI assistant with Zanzibar-enforced "
+                    "access control.\n"
+                    "Answer the user's question clearly, thoroughly, and accurately based on "
+                    "the verified documents provided below.\n"
+                    "Cite the relevant documents where appropriate, and answer all parts of "
+                    "the user's question."
+                )
+                prompt = f"VERIFIED CONTEXT:\n{context_docs}\n\nUSER QUESTION:\n{query}"
             elif res.total_candidates_evaluated > 0 and res.authorized_candidates_count == 0:
-                answer_text = (
+                fallback_answer_text = (
                     f"Access denied: Relevant candidate documents matched query '{query}', but "
                     f"principal '{effective_principal_id}' lacks Zanzibar viewer authorization. "
                     "Under AegisMind zero-leakage security, unauthorized content is strictly "
                     "excluded."
                 )
+                system_prompt = (
+                    "You are AegisMind AI assistant.\n"
+                    "Notice: Matching candidate documents exist in the enterprise repository, "
+                    "but the user lacks Zanzibar viewer authorization to read them. Mention this "
+                    "access boundary briefly, then answer the user's question helpfully using "
+                    "general knowledge."
+                )
+                prompt = f"USER QUESTION:\n{query}"
             else:
-                answer_text = (
+                fallback_answer_text = (
                     f"No indexed documents found matching query '{query}'. "
                     f"Please refine your search terms or verify connector sync status."
                 )
+                system_prompt = (
+                    "You are AegisMind, a helpful and knowledgeable enterprise AI assistant.\n"
+                    "Answer the user's question clearly, accurately, and thoroughly."
+                )
+                prompt = f"USER QUESTION:\n{query}"
 
-            words = answer_text.split(" ")
-            for i, word in enumerate(words):
-                token = word if i == 0 else " " + word
-                data = json.dumps({"token": token})
-                yield f"event: token\ndata: {data}\n\n"
-                await asyncio.sleep(0.015)
+            # Stage 3: Stream tokens from Ollama with fallback
+            ollama_streamed = False
+            try:
+                async for token in stream_ollama_completion(
+                    prompt=prompt,
+                    system_prompt=system_prompt,
+                    model=model,
+                ):
+                    ollama_streamed = True
+                    data = json.dumps({"token": token})
+                    yield f"event: token\ndata: {data}\n\n"
+            except Exception as exc:
+                logger.debug("Ollama streaming skipped: %s", exc)
+
+            if not ollama_streamed:
+                words = fallback_answer_text.split(" ")
+                for i, word in enumerate(words):
+                    token = word if i == 0 else " " + word
+                    data = json.dumps({"token": token})
+                    yield f"event: token\ndata: {data}\n\n"
+                    await asyncio.sleep(0.015)
 
             # Stage 3: Stream citations (both array and individual items for maximum compatibility)
             citations = [r.citation.model_dump() for r in res.results if r.citation]
@@ -476,5 +574,191 @@ def create_routes(state: CoreState) -> APIRouter:
                 detail=f"Secret '{name}' not found",
             )
         return {"name": name, "value": val}
+
+    # 8. GET /api/v1/models: Model discovery for Ollama and local LLMs
+    @router.get("/models")
+    async def get_models() -> dict[str, Any]:
+        """Discover available LLM models from Ollama."""
+        models = await list_available_models()
+        active = models[0] if models else "llama3.2:latest"
+        return {
+            "models": models,
+            "active_model": active,
+            "provider": "ollama" if models else "simulated",
+        }
+
+    # 9. POST /api/v1/documents: Custom document and dataset ingestion
+    @router.post("/documents")
+    async def ingest_document(req: IngestDocumentRequest) -> dict[str, Any]:
+        """Ingest custom document or dataset records with Zanzibar viewer access controls."""
+        pipeline = state.retrieval_pipeline
+        if pipeline is None:
+            from aegismind_core.bootstrap import init_default_core_state
+
+            seeded = await init_default_core_state()
+            state.retrieval_pipeline = seeded.retrieval_pipeline
+            state.authz = seeded.authz
+            state.vector_store = seeded.vector_store
+            state.connectors = seeded.connectors
+            state.indexed_resources = seeded.indexed_resources
+            pipeline = seeded.retrieval_pipeline
+
+        if pipeline is None:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Retrieval pipeline is not configured",
+            )
+
+        doc_id = req.document_id or f"doc-custom-{uuid.uuid4().hex[:8]}"
+        uri = req.uri or f"dataset://{doc_id}"
+
+        # Segment content into coherent chunks
+        paragraphs = [p.strip() for p in req.content.split("\n\n") if p.strip()]
+        if not paragraphs:
+            paragraphs = [req.content.strip()]
+
+        chunks: list[Chunk] = []
+        tuples: list[RelationshipTuple] = []
+
+        for idx, text_block in enumerate(paragraphs, start=1):
+            embedding = await pipeline.embedder.embed_query(text_block)
+            chunk = Chunk(
+                id=f"chunk-{doc_id}-{idx:02d}",
+                document_id=doc_id,
+                index=idx,
+                content=text_block,
+                embedding=embedding,
+                metadata={
+                    "title": req.title,
+                    "uri": uri,
+                    "tenant_id": req.tenant_id,
+                    **req.metadata,
+                },
+                acl=ACL(
+                    is_public="anonymous" in req.allowed_users or "*" in req.allowed_users,
+                    allowed_principals=[f"user:{u}" for u in req.allowed_users],
+                ),
+            )
+            chunks.append(chunk)
+
+        await state.vector_store.upsert(chunks)
+
+        for u in req.allowed_users:
+            tuples.append(
+                RelationshipTuple(
+                    resource=f"document:{doc_id}",
+                    relation="viewer",
+                    subject=f"user:{u}",
+                )
+            )
+
+        if state.authz:
+            await state.authz.write_tuples(tuples)
+
+        resource_entry = {
+            "id": doc_id,
+            "title": req.title,
+            "uri": uri,
+            "tenant_id": req.tenant_id,
+            "chunks_count": len(chunks),
+            "allowed_users": req.allowed_users,
+            "created_at": datetime.now(UTC).isoformat(),
+        }
+        state.indexed_resources.insert(0, resource_entry)
+
+        state.record_audit(
+            event_type="dataset",
+            principal_id="admin",
+            action="ingest_custom_dataset",
+            resource_id=doc_id,
+            metadata={"title": req.title, "chunks_count": len(chunks)},
+        )
+
+        return {
+            "status": "indexed",
+            "document_id": doc_id,
+            "title": req.title,
+            "chunks_count": len(chunks),
+            "allowed_users": req.allowed_users,
+        }
+
+    # 10. DELETE /api/v1/documents/{document_id}: Delete dataset and revoke permissions
+    @router.delete("/documents/{document_id}")
+    async def delete_document(document_id: str) -> dict[str, str]:
+        """Delete an ingested dataset and revoke its Zanzibar permissions immediately."""
+        if hasattr(state.vector_store, "_chunks"):
+            matching_ids = [
+                cid
+                for cid, c in state.vector_store._chunks.items()
+                if getattr(c, "document_id", None) == document_id
+            ]
+            if matching_ids:
+                await state.vector_store.delete(matching_ids)
+
+        if state.authz and hasattr(state.authz, "_tuples"):
+            to_delete = [
+                RelationshipTuple(resource=res, relation=rel, subject=sub)
+                for res, rel, sub in state.authz._tuples
+                if res == f"document:{document_id}"
+            ]
+            if to_delete:
+                await state.authz.delete_tuples(to_delete)
+
+        state.indexed_resources = [r for r in state.indexed_resources if r.get("id") != document_id]
+
+        state.record_audit(
+            event_type="dataset",
+            principal_id="admin",
+            action="delete_custom_dataset",
+            resource_id=document_id,
+        )
+        return {"status": "deleted", "document_id": document_id}
+
+    # 11. POST & GET /api/v1/feedback: User thumbs up/down and answer evaluation hook
+    @router.post("/feedback", response_model=FeedbackEntry)
+    async def submit_feedback(req: FeedbackCreateRequest) -> FeedbackEntry:
+        """Store thumbs up/down rating with query, cited chunks, and rewritten query."""
+        entry = FeedbackEntry(
+            id=f"fb_{uuid.uuid4().hex[:12]}",
+            query=req.query,
+            rewritten_query=req.rewritten_query,
+            retrieved_chunk_ids=req.retrieved_chunk_ids,
+            rating=req.rating,
+            comment=req.comment,
+            tenant_id=req.tenant_id,
+        )
+        state.feedback_entries.insert(0, entry)
+        state.record_audit(
+            event_type="feedback",
+            principal_id="user",
+            action="feedback_submission",
+            metadata={
+                "feedback_id": entry.id,
+                "rating": entry.rating,
+                "query": entry.query,
+                "chunk_count": len(entry.retrieved_chunk_ids),
+            },
+        )
+        return entry
+
+    @router.get("/feedback")
+    async def list_feedback(
+        rating: str | None = Query(None),
+        limit: int = Query(50, ge=1, le=500),
+        offset: int = Query(0, ge=0),
+    ) -> dict[str, Any]:
+        """Query user feedback entries."""
+        items = state.feedback_entries
+        if rating:
+            items = [item for item in items if item.rating == rating]
+
+        total = len(items)
+        paged = items[offset : offset + limit]
+        return {
+            "total": total,
+            "limit": limit,
+            "offset": offset,
+            "entries": [e.model_dump() for e in paged],
+        }
 
     return router

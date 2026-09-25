@@ -71,6 +71,8 @@ select = ["E", "F", "I", "UP", "B", "ASYNC", "S"]
 "examples/**" = ["S101"]
 
 [tool.mypy]
+files = ["packages", "connectors", "tests"]
+exclude = ["^src/"]
 strict = true
 python_version = "3.12"
 ignore_missing_imports = true

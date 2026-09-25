@@ -211,11 +211,49 @@ class Filter(BaseModel):
     )
 
 
+class ChatTurn(BaseModel):
+    """Single turn of conversational history for query rewriting."""
+
+    model_config = ConfigDict(frozen=True)
+
+    role: Literal["user", "assistant", "system"] = Field(..., description="Role of speaker")
+    content: str = Field(..., description="Text content of message")
+
+
+class FeedbackEntry(BaseModel):
+    """User feedback capture entry for answer evaluation."""
+
+    model_config = ConfigDict(frozen=True)
+
+    id: str = Field(..., description="Unique feedback record identifier")
+    query: str = Field(..., description="Original search query text")
+    rewritten_query: str | None = Field(
+        default=None,
+        description="Query after conversational rewriting",
+    )
+    retrieved_chunk_ids: list[str] = Field(
+        default_factory=list,
+        description="List of chunk IDs cited in the answer",
+    )
+    rating: Literal["thumbs_up", "thumbs_down"] = Field(
+        ...,
+        description="Binary user rating for the response",
+    )
+    comment: str | None = Field(default=None, description="Optional user commentary")
+    tenant_id: str | None = Field(default=None, description="Tenant boundary")
+    created_at: datetime = Field(
+        default_factory=lambda: datetime.now(UTC),
+        description="Timestamp when feedback was submitted",
+    )
+
+
 __all__ = [
     "ACL",
+    "ChatTurn",
     "Citation",
     "Chunk",
     "Document",
+    "FeedbackEntry",
     "Filter",
     "Permission",
     "Principal",

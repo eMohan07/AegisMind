@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import logging
 import math
+from typing import Any
 
 import httpx
 
@@ -37,6 +38,139 @@ class MockEmbedderAdapter(EmbedderPort):
 
     async def embed_documents(self, documents: list[str]) -> list[list[float]]:
         return [_deterministic_embedding(doc, self.dimension) for doc in documents]
+
+    async def embed_sparse_query(self, query: str) -> dict[int, float]:
+        return _deterministic_sparse_vector(query)
+
+    async def embed_sparse_documents(self, documents: list[str]) -> list[dict[int, float]]:
+        return [_deterministic_sparse_vector(doc) for doc in documents]
+
+
+def _deterministic_sparse_vector(text: str) -> dict[int, float]:
+    """Generate deterministic pseudo-lexical sparse token weights."""
+    words = [w.strip(".,!?:;\"'()[]{}").lower() for w in text.split() if w.strip()]
+    counts: dict[str, int] = {}
+    for w in words:
+        counts[w] = counts.get(w, 0) + 1
+    sparse: dict[int, float] = {}
+    for word, count in counts.items():
+        token_id = int(hashlib.md5(word.encode("utf-8"), usedforsecurity=False).hexdigest()[:6], 16)
+        sparse[token_id] = round(math.log(1.0 + count), 4)
+    return sparse
+
+
+class MockQueryRewriterAdapter:
+    """Mock query rewriter resolving conversational references using heuristic context."""
+
+    async def rewrite_query(
+        self,
+        query: str,
+        history: list[Any] | None = None,
+    ) -> str:
+        clean_q = query.strip()
+        if not history:
+            return clean_q
+
+        # Extract last user topic or entity from history turns
+        last_context = ""
+        for turn in reversed(history):
+            content = (
+                getattr(turn, "content", "")
+                if not isinstance(turn, dict)
+                else turn.get("content", "")
+            )
+            if content and content != clean_q:
+                last_context = content
+                break
+
+        if not last_context:
+            return clean_q
+
+        lower_q = clean_q.lower()
+        pronoun_triggers = [
+            "it",
+            "this",
+            "that",
+            "the one",
+            "the eu one",
+            "what about",
+            "how about",
+        ]
+        if any(trigger in lower_q for trigger in pronoun_triggers):
+            # Formulate self-contained resolved query
+            return f"{clean_q} regarding {last_context[:60]}"
+
+        return clean_q
+
+
+class OllamaQueryRewriterAdapter:
+    """Ollama query rewriter resolving pronouns and conversational follow-ups."""
+
+    def __init__(
+        self,
+        base_url: str = "http://127.0.0.1:11434",
+        model: str = "llama3.2:latest",
+        client: httpx.AsyncClient | None = None,
+    ) -> None:
+        self.base_url = base_url.rstrip("/")
+        self.model = model
+        self._client = client
+        self._fallback = MockQueryRewriterAdapter()
+
+    async def rewrite_query(
+        self,
+        query: str,
+        history: list[Any] | None = None,
+    ) -> str:
+        if not history:
+            return query.strip()
+
+        history_lines = []
+        for turn in history[-4:]:
+            role = (
+                getattr(turn, "role", "user")
+                if not isinstance(turn, dict)
+                else turn.get("role", "user")
+            )
+            content = (
+                getattr(turn, "content", "")
+                if not isinstance(turn, dict)
+                else turn.get("content", "")
+            )
+            history_lines.append(f"{role.capitalize()}: {content}")
+        history_text = "\n".join(history_lines)
+
+        prompt = (
+            "You are a search query rewriting specialist.\n"
+            "Given the following conversation history and follow-up question, rewrite "
+            "the follow-up question into a standalone, fully-resolved enterprise search "
+            "query with all pronouns resolved.\n"
+            "Output ONLY the rewritten query, nothing else.\n\n"
+            f"Conversation History:\n{history_text}\n\n"
+            f"Follow-up Question: {query}\n"
+            "Standalone Query:"
+        )
+
+        if self._client is not None:
+            try:
+                resp = await self._client.post(
+                    f"{self.base_url}/api/generate",
+                    json={
+                        "model": self.model,
+                        "prompt": prompt,
+                        "stream": False,
+                    },
+                    timeout=5.0,
+                )
+                if resp.status_code == 200:
+                    data = resp.json()
+                    rewritten = str(data.get("response", "")).strip() if isinstance(data, dict) else ""
+                    if rewritten:
+                        return rewritten
+            except Exception as exc:
+                logger.debug("Ollama query rewrite call failed: %s", exc)
+
+        return await self._fallback.rewrite_query(query, history)
 
 
 class MockRerankerAdapter(RerankerPort):
@@ -96,6 +230,25 @@ class TeiEmbedderAdapter(EmbedderPort):
                 logger.warning("TEI embed call failed, falling back to mock: %s", exc)
 
         return await self._fallback.embed_documents(documents)
+
+    async def embed_sparse_query(self, query: str) -> dict[int, float]:
+        res = await self.embed_sparse_documents([query])
+        return res[0]
+
+    async def embed_sparse_documents(self, documents: list[str]) -> list[dict[int, float]]:
+        if self._client is not None:
+            try:
+                resp = await self._client.post(
+                    f"{self.base_url}/embed_sparse",
+                    json={"inputs": documents},
+                )
+                if resp.status_code == 200:
+                    data = resp.json()
+                    if isinstance(data, list):
+                        return [{int(k): float(v) for k, v in item.items()} for item in data]
+            except Exception as exc:
+                logger.debug("TEI sparse embed failed, falling back to lexical: %s", exc)
+        return await self._fallback.embed_sparse_documents(documents)
 
 
 class TeiRerankerAdapter(RerankerPort):

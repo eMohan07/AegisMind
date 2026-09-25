@@ -2,7 +2,9 @@ from __future__ import annotations
 
 from aegismind_retrieval.adapters_model import (
     MockEmbedderAdapter,
+    MockQueryRewriterAdapter,
     MockRerankerAdapter,
+    OllamaQueryRewriterAdapter,
     TeiEmbedderAdapter,
     TeiRerankerAdapter,
 )
@@ -11,9 +13,11 @@ from aegismind_retrieval.adapters_vector import (
     PgVectorScaleAdapter,
     QdrantVectorStoreAdapter,
 )
+from aegismind_retrieval.mmr import DEFAULT_LAMBDA_MULT, maximal_marginal_relevance
 from aegismind_retrieval.pipeline import PipelineResult, RetrievalPipeline
 from aegismind_retrieval.ports import (
     EmbedderPort,
+    QueryRewriterPort,
     RerankerPort,
     ScoredChunk,
     VectorStorePort,
@@ -21,14 +25,18 @@ from aegismind_retrieval.ports import (
 from aegismind_retrieval.rrf import RRF_DEFAULT_K, fuse_dense_sparse, reciprocal_rank_fusion
 
 __all__ = [
+    "DEFAULT_LAMBDA_MULT",
     "RRF_DEFAULT_K",
     "EmbedderPort",
     "MemoryVectorStoreAdapter",
     "MockEmbedderAdapter",
+    "MockQueryRewriterAdapter",
     "MockRerankerAdapter",
+    "OllamaQueryRewriterAdapter",
     "PgVectorScaleAdapter",
     "PipelineResult",
     "QdrantVectorStoreAdapter",
+    "QueryRewriterPort",
     "RerankerPort",
     "RetrievalPipeline",
     "ScoredChunk",
@@ -36,5 +44,6 @@ __all__ = [
     "TeiRerankerAdapter",
     "VectorStorePort",
     "fuse_dense_sparse",
+    "maximal_marginal_relevance",
     "reciprocal_rank_fusion",
 ]

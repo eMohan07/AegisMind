@@ -76,6 +76,49 @@ class MemoryVectorStoreAdapter(VectorStorePort):
 
         return True
 
+    async def query_dense(
+        self,
+        vector: list[float],
+        pre_filter: dict[str, Any] | None = None,
+        top_k: int = 10,
+    ) -> list[ScoredChunk]:
+        """Perform dense vector search with tenant and group pre-filtering."""
+        filtered = [c for c in self._chunks.values() if self._matches_filter(c, pre_filter)]
+        dense_results: list[ScoredChunk] = []
+        for chunk in filtered:
+            if chunk.embedding:
+                score = _cosine_similarity(vector, chunk.embedding)
+                dense_results.append(ScoredChunk(chunk=chunk, score=score))
+        dense_results.sort(key=lambda sc: sc.score, reverse=True)
+        return dense_results[:top_k]
+
+    async def query_lexical(
+        self,
+        query_text: str,
+        sparse_vector: dict[int, float] | None = None,
+        pre_filter: dict[str, Any] | None = None,
+        top_k: int = 10,
+    ) -> list[ScoredChunk]:
+        """Perform lexical BM25 / token matching search with tenant and group pre-filtering."""
+        filtered = [c for c in self._chunks.values() if self._matches_filter(c, pre_filter)]
+        results: list[ScoredChunk] = []
+        query_tokens = set(query_text.lower().split())
+
+        for chunk in filtered:
+            score = 0.0
+            if sparse_vector and chunk.sparse_embedding:
+                score = _sparse_dot_product(sparse_vector, chunk.sparse_embedding)
+            elif query_tokens:
+                chunk_tokens = set(chunk.content.lower().split())
+                overlap = len(query_tokens & chunk_tokens)
+                score = overlap / max(1, len(query_tokens))
+
+            if score > 0.0:
+                results.append(ScoredChunk(chunk=chunk, score=score))
+
+        results.sort(key=lambda sc: sc.score, reverse=True)
+        return results[:top_k]
+
     async def query(
         self,
         vector: list[float] | None = None,
@@ -160,6 +203,96 @@ class PgVectorScaleAdapter(VectorStorePort):
             return
         await self._fallback.upsert(chunks)
 
+    async def query_dense(
+        self,
+        vector: list[float],
+        pre_filter: dict[str, Any] | None = None,
+        top_k: int = 10,
+    ) -> list[ScoredChunk]:
+        """Query pgvectorscale with DiskANN index and cosine distance."""
+        if self.db_pool is not None:
+            tenant_id = pre_filter.get("tenant_id") if pre_filter else None
+            if tenant_id:
+                query = (
+                    f"SELECT id, document_id, content, metadata, "  # noqa: S608
+                    f"1 - (dense_embedding <=> $1::vector) AS score FROM {self.table_name} "
+                    f"WHERE tenant_id = $2 "
+                    f"ORDER BY dense_embedding <=> $1::vector LIMIT $3"
+                )
+                async with self.db_pool.acquire() as conn:
+                    rows = await conn.fetch(query, vector, tenant_id, top_k)
+            else:
+                query = (
+                    f"SELECT id, document_id, content, metadata, "  # noqa: S608
+                    f"1 - (dense_embedding <=> $1::vector) AS score FROM {self.table_name} "
+                    f"ORDER BY dense_embedding <=> $1::vector LIMIT $2"
+                )
+                async with self.db_pool.acquire() as conn:
+                    rows = await conn.fetch(query, vector, top_k)
+
+            return [
+                ScoredChunk(
+                    chunk=Chunk(
+                        id=r["id"],
+                        document_id=r["document_id"],
+                        content=r["content"],
+                        metadata=r.get("metadata", {}),
+                    ),
+                    score=float(r["score"]),
+                )
+                for r in rows
+            ]
+        return await self._fallback.query_dense(vector, pre_filter, top_k)
+
+    async def query_lexical(
+        self,
+        query_text: str,
+        sparse_vector: dict[int, float] | None = None,
+        pre_filter: dict[str, Any] | None = None,
+        top_k: int = 10,
+    ) -> list[ScoredChunk]:
+        """Query PostgreSQL full-text search with tenant scoping."""
+        if self.db_pool is not None:
+            tenant_id = pre_filter.get("tenant_id") if pre_filter else None
+            if tenant_id:
+                query = (
+                    f"SELECT id, document_id, content, metadata, "  # noqa: S608
+                    f"ts_rank_cd(to_tsvector('english', content), "
+                    f"plainto_tsquery('english', $1)) AS score "
+                    f"FROM {self.table_name} "
+                    f"WHERE tenant_id = $2 AND "
+                    f"to_tsvector('english', content) @@ plainto_tsquery('english', $1) "
+                    f"ORDER BY score DESC LIMIT $3"
+                )
+                async with self.db_pool.acquire() as conn:
+                    rows = await conn.fetch(query, query_text, tenant_id, top_k)
+            else:
+                query = (
+                    f"SELECT id, document_id, content, metadata, "  # noqa: S608
+                    f"ts_rank_cd(to_tsvector('english', content), "
+                    f"plainto_tsquery('english', $1)) AS score "
+                    f"FROM {self.table_name} "
+                    f"WHERE to_tsvector('english', content) @@ "
+                    f"plainto_tsquery('english', $1) "
+                    f"ORDER BY score DESC LIMIT $2"
+                )
+                async with self.db_pool.acquire() as conn:
+                    rows = await conn.fetch(query, query_text, top_k)
+
+            return [
+                ScoredChunk(
+                    chunk=Chunk(
+                        id=r["id"],
+                        document_id=r["document_id"],
+                        content=r["content"],
+                        metadata=r.get("metadata", {}),
+                    ),
+                    score=float(r["score"]),
+                )
+                for r in rows
+            ]
+        return await self._fallback.query_lexical(query_text, sparse_vector, pre_filter, top_k)
+
     async def query(
         self,
         vector: list[float] | None = None,
@@ -168,26 +301,8 @@ class PgVectorScaleAdapter(VectorStorePort):
         top_k: int = 10,
     ) -> list[ScoredChunk]:
         """Query pgvectorscale with DiskANN index and cosine distance."""
-        if self.db_pool is not None and vector is not None:
-            query = (
-                f"SELECT id, document_id, content, metadata, "  # noqa: S608
-                f"1 - (embedding <=> $1::vector) AS score FROM {self.table_name} "
-                f"ORDER BY embedding <=> $1::vector LIMIT $2"
-            )
-            async with self.db_pool.acquire() as conn:
-                rows = await conn.fetch(query, vector, top_k)
-                return [
-                    ScoredChunk(
-                        chunk=Chunk(
-                            id=r["id"],
-                            document_id=r["document_id"],
-                            content=r["content"],
-                            metadata=r.get("metadata", {}),
-                        ),
-                        score=float(r["score"]),
-                    )
-                    for r in rows
-                ]
+        if vector is not None:
+            return await self.query_dense(vector, pre_filter, top_k)
         return await self._fallback.query(vector, sparse_vector, pre_filter, top_k)
 
     async def delete(self, chunk_ids: list[str]) -> bool:

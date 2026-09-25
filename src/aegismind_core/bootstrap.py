@@ -148,6 +148,7 @@ async def seed_initial_knowledge(
     for _idx, doc in enumerate(INITIAL_DOCUMENTS, start=1):
         content = doc["content"]
         embedding = await embedder.embed_query(content)
+        sparse_embedding = await embedder.embed_sparse_query(content)
 
         chunk = Chunk(
             id=f"chunk-{doc['id']}-01",
@@ -155,6 +156,7 @@ async def seed_initial_knowledge(
             index=1,
             content=content,
             embedding=embedding,
+            sparse_embedding=sparse_embedding,
             metadata={
                 "title": doc["title"],
                 "uri": doc["uri"],
@@ -236,16 +238,20 @@ def discover_connectors() -> dict[str, Any]:
 
 async def init_default_core_state() -> CoreState:
     """Initialize a fully operational CoreState with pre-seeded pipeline and knowledge."""
+    from aegismind_retrieval.adapters_model import MockQueryRewriterAdapter
+
     vector_store = MemoryVectorStoreAdapter()
     authz = MemoryAuthzAdapter()
     embedder = MockEmbedderAdapter(dimension=64)
     reranker = MockRerankerAdapter()
+    query_rewriter = MockQueryRewriterAdapter()
 
     pipeline = RetrievalPipeline(
         authz=authz,
         vector_store=vector_store,
         embedder=embedder,
         reranker=reranker,
+        query_rewriter=query_rewriter,
     )
 
     state = CoreState(

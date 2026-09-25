@@ -82,9 +82,16 @@ class IngestionPipeline(IngestionPipelinePort):
             ]
             try:
                 embeddings = await self.embedder.embed_documents(chunk_texts)
+                sparse_embeddings = (
+                    await self.embedder.embed_sparse_documents(chunk_texts)
+                    if hasattr(self.embedder, "embed_sparse_documents")
+                    else [None] * len(all_chunks)
+                )
                 embedded_chunks: list[Chunk] = []
-                for chunk, emb in zip(all_chunks, embeddings, strict=True):
-                    # Attach generated dense vector representation
+                for chunk, emb, sparse_emb in zip(
+                    all_chunks, embeddings, sparse_embeddings, strict=False
+                ):
+                    # Attach generated dense and sparse vector representations
                     updated_chunk = Chunk(
                         id=chunk.id,
                         document_id=chunk.document_id,
@@ -92,7 +99,7 @@ class IngestionPipeline(IngestionPipelinePort):
                         content=chunk.content,
                         contextual_prefix=chunk.contextual_prefix,
                         embedding=emb,
-                        sparse_embedding=chunk.sparse_embedding,
+                        sparse_embedding=sparse_emb or chunk.sparse_embedding,
                         acl=chunk.acl,
                         metadata=chunk.metadata,
                     )

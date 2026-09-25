@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any, Protocol, runtime_checkable
 
-from aegismind_types import Chunk
+from aegismind_types import ChatTurn, Chunk
 from pydantic import BaseModel, ConfigDict, Field
 
 
@@ -16,11 +16,48 @@ class ScoredChunk(BaseModel):
 
 
 @runtime_checkable
+class QueryRewriterPort(Protocol):
+    """Port for conversational query rewriting against chat history."""
+
+    async def rewrite_query(
+        self,
+        query: str,
+        history: list[ChatTurn] | None = None,
+    ) -> str:
+        """Resolve pronouns and coreferences against conversational history.
+
+        Args:
+            query: The incoming user query string.
+            history: Optional conversational history turns.
+        """
+        ...
+
+
+@runtime_checkable
 class VectorStorePort(Protocol):
     """Port for indexing and querying dense and sparse chunk vectors."""
 
     async def upsert(self, chunks: list[Chunk]) -> None:
         """Insert or update chunks with dense or sparse embeddings."""
+        ...
+
+    async def query_dense(
+        self,
+        vector: list[float],
+        pre_filter: dict[str, Any] | None = None,
+        top_k: int = 10,
+    ) -> list[ScoredChunk]:
+        """Query vector store using dense vector representation with tenant scoping."""
+        ...
+
+    async def query_lexical(
+        self,
+        query_text: str,
+        sparse_vector: dict[int, float] | None = None,
+        pre_filter: dict[str, Any] | None = None,
+        top_k: int = 10,
+    ) -> list[ScoredChunk]:
+        """Query vector store using lexical BM25 or full-text search with tenant scoping."""
         ...
 
     async def query(
@@ -55,6 +92,14 @@ class EmbedderPort(Protocol):
 
     async def embed_documents(self, documents: list[str]) -> list[list[float]]:
         """Generate dense vector embeddings for a list of document strings."""
+        ...
+
+    async def embed_sparse_query(self, query: str) -> dict[int, float]:
+        """Generate sparse lexical token weights for a query string."""
+        ...
+
+    async def embed_sparse_documents(self, documents: list[str]) -> list[dict[int, float]]:
+        """Generate sparse lexical token weights for a list of document strings."""
         ...
 
 
