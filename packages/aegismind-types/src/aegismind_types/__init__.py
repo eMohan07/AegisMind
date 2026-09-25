@@ -158,6 +158,7 @@ class Citation(BaseModel):
     uri: str | None = Field(default=None, description="Canonical URI of cited document")
     snippet: str = Field(..., description="Excerpt or snippet text supporting answer")
     score: float = Field(..., description="Relevance or reranker score")
+    tenant_id: str | None = Field(default=None, description="Tenant boundary")
 
 
 class SearchResult(BaseModel):
@@ -171,6 +172,7 @@ class SearchResult(BaseModel):
     uri: str | None = Field(default=None, description="Canonical URI of parent document")
     text: str = Field(..., description="Text content of retrieved chunk")
     score: float = Field(..., description="Similarity or relevance score")
+    tenant_id: str | None = Field(default=None, description="Tenant boundary")
     citation: Citation | None = Field(
         default=None,
         description="Associated citation details",

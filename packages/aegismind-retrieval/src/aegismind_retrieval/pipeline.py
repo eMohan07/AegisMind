@@ -268,6 +268,7 @@ class RetrievalPipeline:
             chunk = item.chunk
             doc_title = str(chunk.metadata.get("title", f"Document {chunk.document_id}"))
             chunk_uri = chunk.metadata.get("uri") or f"doc://{chunk.document_id}#chunk={chunk.id}"
+            chunk_tenant = chunk.metadata.get("tenant_id") or principal.tenant_id
 
             snippet = chunk.content[:200] + ("..." if len(chunk.content) > 200 else "")
             citation = Citation(
@@ -277,6 +278,7 @@ class RetrievalPipeline:
                 uri=chunk_uri,
                 snippet=snippet,
                 score=round(item.score, 4),
+                tenant_id=chunk_tenant,
             )
 
             results.append(
@@ -287,6 +289,7 @@ class RetrievalPipeline:
                     uri=chunk_uri,
                     text=chunk.content,
                     score=round(item.score, 4),
+                    tenant_id=chunk_tenant,
                     citation=citation,
                 )
             )
