@@ -7,7 +7,12 @@ from typing import Any
 
 import httpx
 
-from aegismind_retrieval.ports import EmbedderPort, RerankerPort, ScoredChunk
+from aegismind_retrieval.ports import (
+    EmbedderPort,
+    QueryRewriterPort,
+    RerankerPort,
+    ScoredChunk,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -172,6 +177,63 @@ class OllamaQueryRewriterAdapter:
                 logger.debug("Ollama query rewrite call failed: %s", exc)
 
         return await self._fallback.rewrite_query(query, history)
+
+
+class LLMQueryRewriterAdapter:
+    """Query rewriter utilizing any provider conforming to LLMPort."""
+
+    def __init__(
+        self,
+        llm: Any,
+        fallback: QueryRewriterPort | None = None,
+    ) -> None:
+        self.llm = llm
+        self._fallback = fallback or MockQueryRewriterAdapter()
+
+    async def rewrite_query(
+        self,
+        query: str,
+        history: list[Any] | None = None,
+    ) -> str:
+        if not history:
+            return query.strip()
+
+        history_lines = []
+        for turn in history[-4:]:
+            role = (
+                getattr(turn, "role", "user")
+                if not isinstance(turn, dict)
+                else turn.get("role", "user")
+            )
+            content = (
+                getattr(turn, "content", "")
+                if not isinstance(turn, dict)
+                else turn.get("content", "")
+            )
+            history_lines.append(f"{role.capitalize()}: {content}")
+        history_text = "\n".join(history_lines)
+
+        prompt = (
+            "You are a search query rewriting specialist.\n"
+            "Given the following conversation history and follow-up question, rewrite "
+            "the follow-up question into a standalone, fully-resolved enterprise search "
+            "query with all pronouns resolved.\n"
+            "Output ONLY the rewritten query, nothing else.\n\n"
+            f"Conversation History:\n{history_text}\n\n"
+            f"Follow-up Question: {query}\n"
+            "Standalone Query:"
+        )
+
+        try:
+            res = await self.llm.generate(prompt=prompt)
+            rewritten = str(res).strip()
+            if rewritten:
+                return rewritten
+        except Exception as exc:
+            logger.debug("LLM query rewrite call failed: %s", exc)
+
+        fallback_res = await self._fallback.rewrite_query(query, history)
+        return str(fallback_res)
 
 
 class MockRerankerAdapter(RerankerPort):

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from aegismind_retrieval.adapters_model import (
+    LLMQueryRewriterAdapter,
     MockEmbedderAdapter,
     MockQueryRewriterAdapter,
     MockRerankerAdapter,
@@ -28,6 +29,7 @@ __all__ = [
     "DEFAULT_LAMBDA_MULT",
     "RRF_DEFAULT_K",
     "EmbedderPort",
+    "LLMQueryRewriterAdapter",
     "MemoryVectorStoreAdapter",
     "MockEmbedderAdapter",
     "MockQueryRewriterAdapter",

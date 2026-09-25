@@ -86,7 +86,7 @@ async def test_document_versioning_and_embedding_reuse(versioning_fixture: dict[
 
     # Spy on embedder.embed_documents
     embed_mock = AsyncMock(wraps=embedder.embed_documents)
-    setattr(embedder, "embed_documents", embed_mock)
+    embedder.embed_documents = embed_mock  # type: ignore[method-assign]
 
     # 2. Re-ingest document v2 with Section A UNCHANGED, Section B MODIFIED
     rec_v2 = Record(

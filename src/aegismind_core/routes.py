@@ -28,8 +28,9 @@ from fastapi import APIRouter, HTTPException, Query, Response, status
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field
 
+from aegismind_core.adapters.llm import get_llm_adapter
 from aegismind_core.observability import trace_span
-from aegismind_core.ollama import list_available_models, stream_ollama_completion
+from aegismind_core.ports.llm import LLMPort
 
 logger = logging.getLogger(__name__)
 
@@ -149,12 +150,14 @@ class CoreState:
         vector_store: VectorStorePort | None = None,
         ingestion_pipeline: IngestionPipelinePort | None = None,
         secret_store: SecretStorePort | None = None,
+        llm: LLMPort | None = None,
     ) -> None:
         self.retrieval_pipeline = retrieval_pipeline
         self.authz = authz
         self.vector_store = vector_store or MemoryVectorStoreAdapter()
         self.ingestion_pipeline = ingestion_pipeline
         self.secret_store = secret_store or MemorySecretStore()
+        self.llm = llm
         self.scribe_worker = (
             ScribeWorker(pipeline=ingestion_pipeline) if ingestion_pipeline else None
         )
@@ -272,6 +275,7 @@ def create_routes(state: CoreState) -> APIRouter:
 
     # 2. GET /api/v1/chat: Server-Sent Events (SSE) streaming answers with citations
     @router.get("/chat")
+    @router.get("/chat/stream")
     async def chat_sse(
         query: str = Query(..., description="User query for chat session"),
         principal_id: str = Query("anonymous", description="Principal ID"),
@@ -290,6 +294,8 @@ def create_routes(state: CoreState) -> APIRouter:
             state.vector_store = seeded.vector_store
             state.connectors = seeded.connectors
             state.indexed_resources = seeded.indexed_resources
+            if state.llm is None:
+                state.llm = seeded.llm
             pipeline = seeded.retrieval_pipeline
 
         if pipeline is None:
@@ -394,21 +400,22 @@ def create_routes(state: CoreState) -> APIRouter:
                 )
                 prompt = f"USER QUESTION:\n{query}"
 
-            # Stage 3: Stream tokens from Ollama with fallback
-            ollama_streamed = False
+            # Stage 3: Stream tokens from LLMPort with fallback
+            llm_streamed = False
             try:
-                async for token in stream_ollama_completion(
+                llm_adapter = state.llm or get_llm_adapter()
+                async for token in llm_adapter.stream_generate(
                     prompt=prompt,
                     system_prompt=system_prompt,
                     model=model,
                 ):
-                    ollama_streamed = True
+                    llm_streamed = True
                     data = json.dumps({"token": token})
                     yield f"event: token\ndata: {data}\n\n"
             except Exception as exc:
-                logger.debug("Ollama streaming skipped: %s", exc)
+                logger.debug("LLM streaming skipped: %s", exc)
 
-            if not ollama_streamed:
+            if not llm_streamed:
                 words = fallback_answer_text.split(" ")
                 for i, word in enumerate(words):
                     token = word if i == 0 else " " + word
@@ -592,16 +599,23 @@ def create_routes(state: CoreState) -> APIRouter:
             )
         return {"name": name, "value": val}
 
-    # 8. GET /api/v1/models: Model discovery for Ollama and local LLMs
+    # 8. GET /api/v1/models: Model discovery for LLMs
     @router.get("/models")
     async def get_models() -> dict[str, Any]:
-        """Discover available LLM models from Ollama."""
-        models = await list_available_models()
-        active = models[0] if models else "llama3.2:latest"
+        """Discover available LLM models from configured provider."""
+        import os
+
+        llm_adapter = state.llm or get_llm_adapter()
+        try:
+            models = await llm_adapter.list_models()
+        except Exception:
+            models = []
+        active = models[0] if models else getattr(llm_adapter, "default_model", "llama3.2:latest")
+        provider = os.environ.get("LLM_PROVIDER", "ollama")
         return {
             "models": models,
             "active_model": active,
-            "provider": "ollama" if models else "simulated",
+            "provider": provider if models else "simulated",
         }
 
     # 9. POST /api/v1/documents: Custom document and dataset ingestion
