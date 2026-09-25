@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import math
+from datetime import UTC, datetime
 from typing import Any
 
 import httpx
@@ -43,6 +44,10 @@ class MemoryVectorStoreAdapter(VectorStorePort):
         logger.debug("Upserted %d chunks into memory vector store", len(chunks))
 
     def _matches_filter(self, chunk: Chunk, pre_filter: dict[str, Any] | None) -> bool:
+        # Exclude soft-deleted chunks (tombstones)
+        if chunk.is_deleted:
+            return False
+
         if not pre_filter:
             return True
 
@@ -172,6 +177,40 @@ class MemoryVectorStoreAdapter(VectorStorePort):
                 deleted = True
         return deleted
 
+    async def get_by_document(self, document_id: str) -> list[Chunk]:
+        """Retrieve active chunks for a document."""
+        return [
+            c for c in self._chunks.values() if c.document_id == document_id and not c.is_deleted
+        ]
+
+    async def soft_delete_document(self, document_id: str) -> int:
+        """Mark all existing chunks for a document as tombstoned."""
+        count = 0
+        now = datetime.now(UTC)
+        for cid, chunk in list(self._chunks.items()):
+            if chunk.document_id == document_id and not chunk.is_deleted:
+                self._chunks[cid] = chunk.model_copy(update={"is_deleted": True, "deleted_at": now})
+                count += 1
+        logger.debug("Soft-deleted %d chunks for document %s", count, document_id)
+        return count
+
+    async def vacuum_tombstones(self, older_than_seconds: int = 86400) -> int:
+        """Permanently hard-delete tombstoned chunks older than threshold."""
+        now = datetime.now(UTC)
+        to_delete = []
+        for cid, chunk in self._chunks.items():
+            if chunk.is_deleted:
+                if chunk.deleted_at:
+                    age = (now - chunk.deleted_at).total_seconds()
+                    if age >= older_than_seconds:
+                        to_delete.append(cid)
+                else:
+                    to_delete.append(cid)
+        for cid in to_delete:
+            del self._chunks[cid]
+        logger.info("Vacuumed %d tombstoned chunks from memory store", len(to_delete))
+        return len(to_delete)
+
 
 class PgVectorScaleAdapter(VectorStorePort):
     """PostgreSQL pgvectorscale adapter supporting StreamingDiskANN and HNSW indexes."""
@@ -193,12 +232,24 @@ class PgVectorScaleAdapter(VectorStorePort):
                 for c in chunks:
                     query = (
                         f"INSERT INTO {self.table_name} (id, document_id, content, "  # noqa: S608
-                        f"embedding, metadata) VALUES ($1, $2, $3, $4, $5) "
+                        f"dense_embedding, metadata, content_hash, is_deleted, version) "
+                        f"VALUES ($1, $2, $3, $4, $5, $6, $7, $8) "
                         f"ON CONFLICT (id) DO UPDATE SET content = EXCLUDED.content, "
-                        f"embedding = EXCLUDED.embedding, metadata = EXCLUDED.metadata"
+                        f"dense_embedding = EXCLUDED.dense_embedding, "
+                        f"metadata = EXCLUDED.metadata, "
+                        f"content_hash = EXCLUDED.content_hash, is_deleted = EXCLUDED.is_deleted, "
+                        f"version = EXCLUDED.version"
                     )
                     await conn.execute(
-                        query, c.id, c.document_id, c.content, c.embedding, c.metadata
+                        query,
+                        c.id,
+                        c.document_id,
+                        c.content,
+                        c.embedding,
+                        c.metadata,
+                        c.content_hash,
+                        c.is_deleted,
+                        c.version,
                     )
             return
         await self._fallback.upsert(chunks)
@@ -216,7 +267,7 @@ class PgVectorScaleAdapter(VectorStorePort):
                 query = (
                     f"SELECT id, document_id, content, metadata, "  # noqa: S608
                     f"1 - (dense_embedding <=> $1::vector) AS score FROM {self.table_name} "
-                    f"WHERE tenant_id = $2 "
+                    f"WHERE is_deleted = FALSE AND tenant_id = $2 "
                     f"ORDER BY dense_embedding <=> $1::vector LIMIT $3"
                 )
                 async with self.db_pool.acquire() as conn:
@@ -225,6 +276,7 @@ class PgVectorScaleAdapter(VectorStorePort):
                 query = (
                     f"SELECT id, document_id, content, metadata, "  # noqa: S608
                     f"1 - (dense_embedding <=> $1::vector) AS score FROM {self.table_name} "
+                    f"WHERE is_deleted = FALSE "
                     f"ORDER BY dense_embedding <=> $1::vector LIMIT $2"
                 )
                 async with self.db_pool.acquire() as conn:
@@ -260,7 +312,7 @@ class PgVectorScaleAdapter(VectorStorePort):
                     f"ts_rank_cd(to_tsvector('english', content), "
                     f"plainto_tsquery('english', $1)) AS score "
                     f"FROM {self.table_name} "
-                    f"WHERE tenant_id = $2 AND "
+                    f"WHERE is_deleted = FALSE AND tenant_id = $2 AND "
                     f"to_tsvector('english', content) @@ plainto_tsquery('english', $1) "
                     f"ORDER BY score DESC LIMIT $3"
                 )
@@ -272,7 +324,7 @@ class PgVectorScaleAdapter(VectorStorePort):
                     f"ts_rank_cd(to_tsvector('english', content), "
                     f"plainto_tsquery('english', $1)) AS score "
                     f"FROM {self.table_name} "
-                    f"WHERE to_tsvector('english', content) @@ "
+                    f"WHERE is_deleted = FALSE AND to_tsvector('english', content) @@ "
                     f"plainto_tsquery('english', $1) "
                     f"ORDER BY score DESC LIMIT $2"
                 )
@@ -313,6 +365,57 @@ class PgVectorScaleAdapter(VectorStorePort):
                 res = await conn.execute(query, chunk_ids)
                 return "DELETE" in res
         return await self._fallback.delete(chunk_ids)
+
+    async def get_by_document(self, document_id: str) -> list[Chunk]:
+        """Retrieve active chunks for a document from pgvectorscale."""
+        if self.db_pool is not None:
+            query = (
+                f"SELECT id, document_id, content, contextual_prefix, dense_embedding, "  # noqa: S608
+                f"metadata, content_hash, version FROM {self.table_name} "
+                f"WHERE document_id = $1 AND is_deleted = FALSE"
+            )
+            async with self.db_pool.acquire() as conn:
+                rows = await conn.fetch(query, document_id)
+            return [
+                Chunk(
+                    id=r["id"],
+                    document_id=r["document_id"],
+                    content=r["content"],
+                    contextual_prefix=r.get("contextual_prefix"),
+                    embedding=r.get("dense_embedding"),
+                    metadata=r.get("metadata", {}),
+                    content_hash=r.get("content_hash"),
+                    version=r.get("version", 1),
+                )
+                for r in rows
+            ]
+        return await self._fallback.get_by_document(document_id)
+
+    async def soft_delete_document(self, document_id: str) -> int:
+        """Mark chunks for document as tombstoned in pgvectorscale."""
+        if self.db_pool is not None:
+            query = (
+                f"UPDATE {self.table_name} SET is_deleted = TRUE, deleted_at = CURRENT_TIMESTAMP "  # noqa: S608
+                f"WHERE document_id = $1 AND is_deleted = FALSE"
+            )
+            async with self.db_pool.acquire() as conn:
+                res = await conn.execute(query, document_id)
+                parts = res.split()
+                return int(parts[1]) if len(parts) > 1 and parts[1].isdigit() else 0
+        return await self._fallback.soft_delete_document(document_id)
+
+    async def vacuum_tombstones(self, older_than_seconds: int = 86400) -> int:
+        """Permanently delete tombstoned chunks older than threshold in pgvectorscale."""
+        if self.db_pool is not None:
+            query = (
+                f"DELETE FROM {self.table_name} "  # noqa: S608
+                f"WHERE is_deleted = TRUE AND deleted_at < NOW() - INTERVAL '1 second' * $1"
+            )
+            async with self.db_pool.acquire() as conn:
+                res = await conn.execute(query, older_than_seconds)
+                parts = res.split()
+                return int(parts[1]) if len(parts) > 1 and parts[1].isdigit() else 0
+        return await self._fallback.vacuum_tombstones(older_than_seconds)
 
 
 class QdrantVectorStoreAdapter(VectorStorePort):
@@ -408,3 +511,15 @@ class QdrantVectorStoreAdapter(VectorStorePort):
             )
             return resp.status_code == 200
         return True
+
+    async def get_by_document(self, document_id: str) -> list[Chunk]:
+        """Retrieve active chunks for a document."""
+        return await self._fallback.get_by_document(document_id)
+
+    async def soft_delete_document(self, document_id: str) -> int:
+        """Mark document chunks as tombstoned."""
+        return await self._fallback.soft_delete_document(document_id)
+
+    async def vacuum_tombstones(self, older_than_seconds: int = 86400) -> int:
+        """Vacuum tombstoned chunks."""
+        return await self._fallback.vacuum_tombstones(older_than_seconds)

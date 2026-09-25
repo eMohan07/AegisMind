@@ -145,6 +145,22 @@ class Chunk(BaseModel):
         default_factory=dict,
         description="Metadata inherited or specific to chunk",
     )
+    content_hash: str | None = Field(
+        default=None,
+        description="SHA-256 hash of chunk content for versioning and re-embedding avoidance",
+    )
+    is_deleted: bool = Field(
+        default=False,
+        description="Soft-delete tombstone flag for document updates",
+    )
+    deleted_at: datetime | None = Field(
+        default=None,
+        description="Timestamp when chunk was tombstoned",
+    )
+    version: int = Field(
+        default=1,
+        description="Monotonically increasing document version number",
+    )
 
 
 class Citation(BaseModel):

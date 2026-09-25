@@ -39,11 +39,19 @@ CREATE TABLE IF NOT EXISTS aegismind_chunks (
     sparse_embedding JSONB,
     acl JSONB NOT NULL,
     metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+    content_hash VARCHAR(64),
+    is_deleted BOOLEAN NOT NULL DEFAULT FALSE,
+    deleted_at TIMESTAMPTZ,
+    version INT NOT NULL DEFAULT 1,
     created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
 CREATE INDEX IF NOT EXISTS idx_chunks_tenant_doc 
     ON aegismind_chunks(tenant_id, document_id);
+
+CREATE INDEX IF NOT EXISTS idx_chunks_active 
+    ON aegismind_chunks(tenant_id, document_id) 
+    WHERE is_deleted = FALSE;
 
 CREATE INDEX IF NOT EXISTS idx_chunks_vector_hnsw 
     ON aegismind_chunks USING hnsw (dense_embedding vector_cosine_ops);

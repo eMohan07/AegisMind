@@ -81,6 +81,18 @@ class VectorStorePort(Protocol):
         """Delete chunks by ID. Returns True if deleted."""
         ...
 
+    async def get_by_document(self, document_id: str) -> list[Chunk]:
+        """Retrieve all active chunks for a document to check content hashes."""
+        ...
+
+    async def soft_delete_document(self, document_id: str) -> int:
+        """Mark existing chunks for a document as tombstoned."""
+        ...
+
+    async def vacuum_tombstones(self, older_than_seconds: int = 86400) -> int:
+        """Permanently hard-delete tombstoned chunks older than threshold."""
+        ...
+
 
 @runtime_checkable
 class EmbedderPort(Protocol):

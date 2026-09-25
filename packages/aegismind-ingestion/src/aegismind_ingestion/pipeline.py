@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import logging
 
 from aegismind_authz.mappers import acl_to_relationship_tuples
@@ -41,12 +42,12 @@ class IngestionPipeline(IngestionPipelinePort):
     async def ingest_records(self, records: list[Record]) -> IngestionSummary:
         """Process a batch of raw records through the ingestion lifecycle.
 
-        Stages:
-        1. Parsing raw records to canonical Documents.
-        2. Section-aware layout chunking with contextual prefixes.
-        3. Dense embedding generation.
-        4. Vector store indexing.
-        5. Zanzibar relationship tuple mapping and write to Authz.
+        Enforces:
+        1. Parse records to canonical Documents.
+        2. Write Zanzibar SpiceDB relationship tuples before indexing chunks.
+        3. Chunk documents, sanitize, and compute SHA-256 content hashes.
+        4. Preserve existing embeddings for unchanged chunks to avoid re-embedding.
+        5. Atomically soft-delete old document chunks and upsert versioned chunks.
         """
         if not records:
             return IngestionSummary()
@@ -67,74 +68,7 @@ class IngestionPipeline(IngestionPipelinePort):
                 logger.error(err_msg)
                 errors.append(err_msg)
 
-        # 2. Chunk documents and execute injection sanitization pass
-        for doc in documents:
-            try:
-                doc_chunks = self.chunker.chunk(doc)
-                for c in doc_chunks:
-                    san_res = self.sanitizer.sanitize(c.content, chunk_id=c.id)
-                    if san_res.stripped_patterns:
-                        sanitized_chunk = Chunk(
-                            id=c.id,
-                            document_id=c.document_id,
-                            index=c.index,
-                            content=san_res.cleaned_text,
-                            contextual_prefix=c.contextual_prefix,
-                            embedding=c.embedding,
-                            sparse_embedding=c.sparse_embedding,
-                            acl=c.acl,
-                            metadata={
-                                **c.metadata,
-                                "sanitized_patterns": san_res.stripped_patterns,
-                            },
-                        )
-                        all_chunks.append(sanitized_chunk)
-                    else:
-                        all_chunks.append(c)
-            except Exception as exc:
-                err_msg = f"Failed to chunk document {doc.id}: {exc}"
-                logger.error(err_msg)
-                errors.append(err_msg)
-
-        # 3. Embed chunks
-        if all_chunks:
-            chunk_texts = [
-                f"{c.contextual_prefix}{c.content}" if c.contextual_prefix else c.content
-                for c in all_chunks
-            ]
-            try:
-                embeddings = await self.embedder.embed_documents(chunk_texts)
-                sparse_embeddings = (
-                    await self.embedder.embed_sparse_documents(chunk_texts)
-                    if hasattr(self.embedder, "embed_sparse_documents")
-                    else [None] * len(all_chunks)
-                )
-                embedded_chunks: list[Chunk] = []
-                for chunk, emb, sparse_emb in zip(
-                    all_chunks, embeddings, sparse_embeddings, strict=False
-                ):
-                    # Attach generated dense and sparse vector representations
-                    updated_chunk = Chunk(
-                        id=chunk.id,
-                        document_id=chunk.document_id,
-                        index=chunk.index,
-                        content=chunk.content,
-                        contextual_prefix=chunk.contextual_prefix,
-                        embedding=emb,
-                        sparse_embedding=sparse_emb or chunk.sparse_embedding,
-                        acl=chunk.acl,
-                        metadata=chunk.metadata,
-                    )
-                    embedded_chunks.append(updated_chunk)
-
-                # 4. Upsert into vector store
-                await self.vector_store.upsert(embedded_chunks)
-            except Exception as exc:
-                err_msg = f"Failed during embedding / vector store indexing: {exc}"
-                logger.error(err_msg)
-                errors.append(err_msg)
-
-        # 5. Map ACLs to Zanzibar relationship tuples and write to Authz
+        # 2. Write SpiceDB tuples first so permissions are active before chunks become searchable
         for doc in documents:
             try:
                 tuples = acl_to_relationship_tuples(
@@ -158,6 +92,133 @@ class IngestionPipeline(IngestionPipelinePort):
                 )
             except Exception as exc:
                 err_msg = f"Failed to write relationship tuples to Authz: {exc}"
+                logger.error(err_msg)
+                errors.append(err_msg)
+
+        # 3. Chunk documents, check SHA-256 content hashes, and identify chunks to embed
+        prepared_chunks: list[Chunk] = []
+        chunks_to_embed: list[tuple[Chunk, str, int]] = []
+
+        for doc in documents:
+            try:
+                existing_chunks = await self.vector_store.get_by_document(doc.id)
+                existing_hash_map: dict[str, Chunk] = {
+                    c.content_hash: c for c in existing_chunks if c.content_hash and c.embedding
+                }
+                next_version = max((c.version for c in existing_chunks), default=0) + 1
+
+                doc_chunks = self.chunker.chunk(doc)
+                for c in doc_chunks:
+                    san_res = self.sanitizer.sanitize(c.content, chunk_id=c.id)
+                    cleaned_content = (
+                        san_res.cleaned_text if san_res.stripped_patterns else c.content
+                    )
+                    chunk_meta = dict(c.metadata)
+                    if san_res.stripped_patterns:
+                        chunk_meta["sanitized_patterns"] = san_res.stripped_patterns
+
+                    # Compute SHA-256 content hash
+                    hash_input = (
+                        f"{c.contextual_prefix}{cleaned_content}"
+                        if c.contextual_prefix
+                        else cleaned_content
+                    )
+                    content_hash = hashlib.sha256(hash_input.encode("utf-8")).hexdigest()
+
+                    # Check if unchanged chunk already has embedding in prior version
+                    versioned_chunk_id = f"{c.document_id}_v{next_version}_chunk_{c.index}"
+                    if content_hash in existing_hash_map:
+                        cached = existing_hash_map[content_hash]
+                        logger.debug(
+                            "Reusing vector embedding for unchanged chunk %s (hash=%s)",
+                            versioned_chunk_id,
+                            content_hash,
+                        )
+                        reused_chunk = Chunk(
+                            id=versioned_chunk_id,
+                            document_id=c.document_id,
+                            index=c.index,
+                            content=cleaned_content,
+                            contextual_prefix=c.contextual_prefix,
+                            embedding=cached.embedding,
+                            sparse_embedding=cached.sparse_embedding,
+                            acl=c.acl,
+                            metadata=chunk_meta,
+                            content_hash=content_hash,
+                            is_deleted=False,
+                            version=next_version,
+                        )
+                        prepared_chunks.append(reused_chunk)
+                    else:
+                        pending_chunk = Chunk(
+                            id=versioned_chunk_id,
+                            document_id=c.document_id,
+                            index=c.index,
+                            content=cleaned_content,
+                            contextual_prefix=c.contextual_prefix,
+                            acl=c.acl,
+                            metadata=chunk_meta,
+                            content_hash=content_hash,
+                            is_deleted=False,
+                            version=next_version,
+                        )
+                        chunks_to_embed.append((pending_chunk, content_hash, next_version))
+            except Exception as exc:
+                err_msg = f"Failed chunking/versioning document {doc.id}: {exc}"
+                logger.error(err_msg)
+                errors.append(err_msg)
+
+        # 4. Generate embeddings only for newly created or modified chunks
+        if chunks_to_embed:
+            chunk_texts = [
+                f"{c.contextual_prefix}{c.content}" if c.contextual_prefix else c.content
+                for c, _, _ in chunks_to_embed
+            ]
+            try:
+                embeddings = await self.embedder.embed_documents(chunk_texts)
+                sparse_embeddings = (
+                    await self.embedder.embed_sparse_documents(chunk_texts)
+                    if hasattr(self.embedder, "embed_sparse_documents")
+                    else [None] * len(chunks_to_embed)
+                )
+                for (c, chash, ver), emb, sparse_emb in zip(
+                    chunks_to_embed, embeddings, sparse_embeddings, strict=False
+                ):
+                    updated_chunk = Chunk(
+                        id=c.id,
+                        document_id=c.document_id,
+                        index=c.index,
+                        content=c.content,
+                        contextual_prefix=c.contextual_prefix,
+                        embedding=emb,
+                        sparse_embedding=sparse_emb or c.sparse_embedding,
+                        acl=c.acl,
+                        metadata=c.metadata,
+                        content_hash=chash,
+                        is_deleted=False,
+                        version=ver,
+                    )
+                    prepared_chunks.append(updated_chunk)
+            except Exception as exc:
+                err_msg = f"Failed during embedding generation: {exc}"
+                logger.error(err_msg)
+                errors.append(err_msg)
+
+        # 5. Atomically soft-delete old document chunks and index new versioned chunks
+        for doc in documents:
+            try:
+                await self.vector_store.soft_delete_document(doc.id)
+            except Exception as exc:
+                err_msg = f"Failed soft-deleting previous chunks for {doc.id}: {exc}"
+                logger.error(err_msg)
+                errors.append(err_msg)
+
+        if prepared_chunks:
+            try:
+                await self.vector_store.upsert(prepared_chunks)
+                all_chunks.extend(prepared_chunks)
+            except Exception as exc:
+                err_msg = f"Failed indexing chunks into vector store: {exc}"
                 logger.error(err_msg)
                 errors.append(err_msg)
 

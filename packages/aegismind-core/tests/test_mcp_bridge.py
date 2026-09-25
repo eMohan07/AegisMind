@@ -131,7 +131,7 @@ async def test_mcp_endpoints_and_jsonrpc() -> None:
 
 @pytest.mark.asyncio
 async def test_mcp_client_bridge() -> None:
-    server = MCPBridgeServer(name="test-server")
+    server = MCPBridgeServer(name="test-server", allowed_actions={"echo"})
 
     async def echo_handler(args: dict[str, Any]) -> MCPToolCallResponse:
         from aegismind_mcp_bridge.models import MCPContentItem
