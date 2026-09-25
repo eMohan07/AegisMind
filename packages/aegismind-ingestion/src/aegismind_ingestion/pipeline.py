@@ -14,6 +14,7 @@ from aegismind_ingestion.ports import (
     IngestionSummary,
     ParserPort,
 )
+from aegismind_ingestion.sanitizer import IngestionSanitizer
 
 logger = logging.getLogger(__name__)
 
@@ -28,12 +29,14 @@ class IngestionPipeline(IngestionPipelinePort):
         embedder: EmbedderPort,
         authz: AuthzPort,
         chunker: ChunkerPort | None = None,
+        sanitizer: IngestionSanitizer | None = None,
     ) -> None:
         self.parser = parser
         self.vector_store = vector_store
         self.embedder = embedder
         self.authz = authz
         self.chunker = chunker or SectionAwareChunker()
+        self.sanitizer = sanitizer or IngestionSanitizer()
 
     async def ingest_records(self, records: list[Record]) -> IngestionSummary:
         """Process a batch of raw records through the ingestion lifecycle.
@@ -64,11 +67,30 @@ class IngestionPipeline(IngestionPipelinePort):
                 logger.error(err_msg)
                 errors.append(err_msg)
 
-        # 2. Chunk documents
+        # 2. Chunk documents and execute injection sanitization pass
         for doc in documents:
             try:
                 doc_chunks = self.chunker.chunk(doc)
-                all_chunks.extend(doc_chunks)
+                for c in doc_chunks:
+                    san_res = self.sanitizer.sanitize(c.content, chunk_id=c.id)
+                    if san_res.stripped_patterns:
+                        sanitized_chunk = Chunk(
+                            id=c.id,
+                            document_id=c.document_id,
+                            index=c.index,
+                            content=san_res.cleaned_text,
+                            contextual_prefix=c.contextual_prefix,
+                            embedding=c.embedding,
+                            sparse_embedding=c.sparse_embedding,
+                            acl=c.acl,
+                            metadata={
+                                **c.metadata,
+                                "sanitized_patterns": san_res.stripped_patterns,
+                            },
+                        )
+                        all_chunks.append(sanitized_chunk)
+                    else:
+                        all_chunks.append(c)
             except Exception as exc:
                 err_msg = f"Failed to chunk document {doc.id}: {exc}"
                 logger.error(err_msg)

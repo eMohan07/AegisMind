@@ -17,6 +17,12 @@ logger = logging.getLogger(__name__)
 
 ToolHandler = Callable[[dict[str, Any]], Awaitable[MCPToolCallResponse] | MCPToolCallResponse]
 
+DEFAULT_ACTION_ALLOWLIST: set[str] = {
+    "aegismind_search",
+    "aegismind_read",
+    "aegismind_list",
+}
+
 
 class MCPBridgeServer:
     """Model Context Protocol server bridge exposing tools and handling JSON-RPC calls."""
@@ -25,9 +31,11 @@ class MCPBridgeServer:
         self,
         name: str = "aegismind-mcp-bridge",
         version: str = "0.0.1",
+        allowed_actions: set[str] | None = None,
     ) -> None:
         self.name = name
         self.version = version
+        self.allowed_actions = set(allowed_actions or DEFAULT_ACTION_ALLOWLIST)
         self._tools: dict[str, MCPTool] = {}
         self._handlers: dict[str, ToolHandler] = {}
 
@@ -46,7 +54,7 @@ class MCPBridgeServer:
         return list(self._tools.values())
 
     async def call_tool(self, request: MCPToolCallRequest) -> MCPToolCallResponse:
-        """Execute a tool by name with arguments."""
+        """Execute a tool by name with arguments and output-side action validation."""
         if request.name not in self._handlers:
             return MCPToolCallResponse(
                 content=[
@@ -57,6 +65,28 @@ class MCPBridgeServer:
                 ],
                 isError=True,
             )
+
+        # Output-side validation: enforce allowlist for agentic actions beyond read/search
+        if request.name not in self.allowed_actions:
+            confirmed = bool(request.arguments.get("confirmed", False))
+            if not confirmed:
+                logger.warning(
+                    "Blocked non-allowlisted MCP action without explicit confirmation: tool='%s'",
+                    request.name,
+                )
+                return MCPToolCallResponse(
+                    content=[
+                        MCPContentItem(
+                            type="text",
+                            text=(
+                                f"Agentic action '{request.name}' blocked: Actions beyond "
+                                "read/search require explicit confirmation (confirmed=True) "
+                                "to prevent indirect prompt injection execution."
+                            ),
+                        )
+                    ],
+                    isError=True,
+                )
 
         handler = self._handlers[request.name]
         try:
