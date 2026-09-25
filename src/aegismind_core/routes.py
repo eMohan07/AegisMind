@@ -24,10 +24,11 @@ from aegismind_types import (
     FeedbackEntry,
     Principal,
 )
-from fastapi import APIRouter, HTTPException, Query, status
+from fastapi import APIRouter, HTTPException, Query, Response, status
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field
 
+from aegismind_core.observability import trace_span
 from aegismind_core.ollama import list_available_models, stream_ollama_completion
 
 logger = logging.getLogger(__name__)
@@ -227,18 +228,26 @@ def create_routes(state: CoreState) -> APIRouter:
             ]
 
         try:
-            result = await pipeline.execute(
-                query=req.query,
-                principal=principal,
-                chat_history=parsed_history,
-                query_type=req.query_type,
-                sparse_query=req.sparse_query,
-                pre_filter=req.pre_filter,
-                top_k=effective_top_k,
-                overfetch_factor=req.overfetch_factor,
-                apply_mmr=req.apply_mmr,
-                mmr_lambda=req.mmr_lambda,
-            )
+            with trace_span(
+                "agora.search",
+                attributes={
+                    "query": req.query,
+                    "tenant_id": req.tenant_id,
+                    "user_id": principal.id,
+                },
+            ):
+                result = await pipeline.execute(
+                    query=req.query,
+                    principal=principal,
+                    chat_history=parsed_history,
+                    query_type=req.query_type,
+                    sparse_query=req.sparse_query,
+                    pre_filter=req.pre_filter,
+                    top_k=effective_top_k,
+                    overfetch_factor=req.overfetch_factor,
+                    apply_mmr=req.apply_mmr,
+                    mmr_lambda=req.mmr_lambda,
+                )
 
             state.record_audit(
                 event_type="search",
@@ -316,11 +325,19 @@ def create_routes(state: CoreState) -> APIRouter:
             await asyncio.sleep(0.04)
 
             # Stage 1: Retrieval through Sacred Pipeline
-            res = await pipeline.execute(
-                query=query,
-                principal=principal,
-                top_k=top_k,
-            )
+            with trace_span(
+                "agora.chat_retrieval",
+                attributes={
+                    "query": query,
+                    "tenant_id": tenant_id,
+                    "user_id": effective_principal_id,
+                },
+            ):
+                res = await pipeline.execute(
+                    query=query,
+                    principal=principal,
+                    top_k=top_k,
+                )
 
             # Stage 2: Formulate prompt for Ollama and fallback synthesis
             if res.results:
@@ -760,5 +777,16 @@ def create_routes(state: CoreState) -> APIRouter:
             "offset": offset,
             "entries": [e.model_dump() for e in paged],
         }
+
+    # 13. GET /api/v1/metrics: Prometheus metrics endpoint
+    @router.get("/metrics", include_in_schema=False)
+    def api_metrics() -> Response:
+        """Prometheus metrics exposition endpoint."""
+        from aegismind_core.observability import render_prometheus_metrics
+
+        return Response(
+            content=render_prometheus_metrics(),
+            media_type="text/plain; version=0.0.4; charset=utf-8",
+        )
 
     return router

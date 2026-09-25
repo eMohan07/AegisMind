@@ -8,6 +8,8 @@ from typing import Any
 
 import httpx
 
+from aegismind_core.observability import trace_span
+
 logger = logging.getLogger(__name__)
 
 DEFAULT_OLLAMA_MODEL = os.environ.get("OLLAMA_MODEL", "llama3.2:latest")
@@ -90,23 +92,29 @@ async def stream_ollama_completion(
     if system_prompt:
         payload["system"] = system_prompt
 
-    async with httpx.AsyncClient(timeout=60.0) as client:
-        async with client.stream("POST", f"{active_url}/api/generate", json=payload) as response:
-            if response.status_code != 200:
-                logger.warning("Ollama returned status %d", response.status_code)
-                return
-            async for line in response.aiter_lines():
-                if not line:
-                    continue
-                try:
-                    data = json.loads(line)
-                    token = data.get("response", "")
-                    if token:
-                        yield token
-                    if data.get("done", False):
-                        break
-                except Exception as exc:
-                    logger.debug("Error parsing Ollama chunk: %s", exc)
+    with trace_span(
+        "ollama.stream_completion",
+        attributes={"llm.model": chosen_model, "llm.endpoint": active_url},
+    ):
+        async with httpx.AsyncClient(timeout=60.0) as client:
+            async with client.stream(
+                "POST", f"{active_url}/api/generate", json=payload
+            ) as response:
+                if response.status_code != 200:
+                    logger.warning("Ollama returned status %d", response.status_code)
+                    return
+                async for line in response.aiter_lines():
+                    if not line:
+                        continue
+                    try:
+                        data = json.loads(line)
+                        token = data.get("response", "")
+                        if token:
+                            yield token
+                        if data.get("done", False):
+                            break
+                    except Exception as exc:
+                        logger.debug("Error parsing Ollama chunk: %s", exc)
 
 
 def build_isolated_prompt(

@@ -121,3 +121,24 @@ class RerankerPort(Protocol):
             top_n: Number of top reranked chunks to return.
         """
         ...
+
+
+@runtime_checkable
+class TelemetryPort(Protocol):
+    """Port for recording telemetry metrics and distributed tracing spans."""
+
+    def record_stage_latency(self, stage: str, duration_seconds: float) -> None:
+        """Record latency for a specific retrieval lifecycle stage in seconds."""
+        ...
+
+    def record_reranker_latency(self, duration_seconds: float) -> None:
+        """Record cross-encoder reranker execution duration in seconds."""
+        ...
+
+    def record_authz_metrics(self, tenant_id: str, evaluated: int, denied: int) -> None:
+        """Record Zanzibar authorization candidate evaluation counts."""
+        ...
+
+    def record_overfetch_effectiveness(self, tenant_id: str, ratio: float) -> None:
+        """Record ratio of authorized candidates to total candidates evaluated."""
+        ...

@@ -246,12 +246,15 @@ async def init_default_core_state() -> CoreState:
     reranker = MockRerankerAdapter()
     query_rewriter = MockQueryRewriterAdapter()
 
+    from aegismind_core.observability import PrometheusTelemetryAdapter
+
     pipeline = RetrievalPipeline(
         authz=authz,
         vector_store=vector_store,
         embedder=embedder,
         reranker=reranker,
         query_rewriter=query_rewriter,
+        telemetry=PrometheusTelemetryAdapter(),
     )
 
     state = CoreState(

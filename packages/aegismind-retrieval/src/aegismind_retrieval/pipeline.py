@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import math
+import time
 from typing import Any
 
 from aegismind_authz.mappers import encode_subject
@@ -14,9 +15,11 @@ from aegismind_retrieval.ports import (
     EmbedderPort,
     QueryRewriterPort,
     RerankerPort,
+    TelemetryPort,
     VectorStorePort,
 )
 from aegismind_retrieval.rrf import fuse_dense_sparse
+from aegismind_retrieval.telemetry import NoOpTelemetryAdapter
 
 logger = logging.getLogger(__name__)
 
@@ -82,12 +85,14 @@ class RetrievalPipeline:
         embedder: EmbedderPort,
         reranker: RerankerPort,
         query_rewriter: QueryRewriterPort | None = None,
+        telemetry: TelemetryPort | None = None,
     ) -> None:
         self.authz = authz
         self.vector_store = vector_store
         self.embedder = embedder
         self.reranker = reranker
         self.query_rewriter = query_rewriter
+        self.telemetry = telemetry or NoOpTelemetryAdapter()
 
     async def execute(
         self,
@@ -104,7 +109,10 @@ class RetrievalPipeline:
         mmr_lambda: float = 0.7,
     ) -> PipelineResult:
         """Execute the Sacred Enforcement Pipeline with query rewriting, hybrid RRF, and MMR."""
+        t_pipeline_start = time.perf_counter()
+
         # Stage 0: Conversational query rewriting
+        t0 = time.perf_counter()
         effective_query = query
         rewritten_query_log: str | None = None
         if self.query_rewriter is not None and chat_history:
@@ -117,8 +125,10 @@ class RetrievalPipeline:
             )
         else:
             logger.info("Stage 0 query rewrite skipped: user='%s', query='%s'", principal.id, query)
+        self.telemetry.record_stage_latency("stage_0_query_rewriting", time.perf_counter() - t0)
 
         # Stage 1: Dual dense (1024-dim) and sparse lexical embedding
+        t1 = time.perf_counter()
         query_vector = await self.embedder.embed_query(effective_query)
         if sparse_query is not None:
             effective_sparse_query = sparse_query
@@ -126,8 +136,10 @@ class RetrievalPipeline:
             effective_sparse_query = await self.embedder.embed_sparse_query(effective_query)
         else:
             effective_sparse_query = None
+        self.telemetry.record_stage_latency("stage_1_embedding", time.perf_counter() - t1)
 
         # Stage 2: Dual dense and lexical search (tenant and group scoped)
+        t2 = time.perf_counter()
         coarse_filter = dict(pre_filter or {})
         if principal.tenant_id and "tenant_id" not in coarse_filter:
             coarse_filter["tenant_id"] = principal.tenant_id
@@ -168,16 +180,24 @@ class RetrievalPipeline:
                 pre_filter=coarse_filter,
                 top_k=fetch_pool_size,
             )
+        self.telemetry.record_stage_latency("stage_2_search", time.perf_counter() - t2)
 
         # Stage 3: Reciprocal Rank Fusion (RRF)
+        t3 = time.perf_counter()
         fused_candidates = fuse_dense_sparse(dense_candidates, lexical_candidates)
+        self.telemetry.record_stage_latency("stage_3_rrf", time.perf_counter() - t3)
 
         # Stage 4: Overfetch selection based on query type multiplier
+        t4 = time.perf_counter()
         candidates_to_evaluate = int(math.ceil(top_k * clamped_overfetch))
         candidates = fused_candidates[:candidates_to_evaluate]
         total_evaluated = len(candidates)
+        self.telemetry.record_stage_latency("stage_4_overfetch", time.perf_counter() - t4)
 
         if not candidates:
+            self.telemetry.record_stage_latency(
+                "total_query", time.perf_counter() - t_pipeline_start
+            )
             return PipelineResult(
                 query=query,
                 rewritten_query=rewritten_query_log,
@@ -190,6 +210,7 @@ class RetrievalPipeline:
             )
 
         # Stage 5: Zanzibar bulk authz check with at_least_as_fresh consistency and strict drop
+        t5 = time.perf_counter()
         subject_str = encode_subject(principal)
         unique_doc_ids = list(dict.fromkeys(c.chunk.document_id for c in candidates))
 
@@ -225,6 +246,21 @@ class RetrievalPipeline:
         denied_count = total_evaluated - authorized_count
         actual_deny_rate = denied_count / max(1, total_evaluated)
 
+        # Record telemetry authz metrics and overfetch effectiveness ratio
+        tenant = principal.tenant_id or "default"
+        self.telemetry.record_authz_metrics(
+            tenant_id=tenant, evaluated=total_evaluated, denied=denied_count
+        )
+        effectiveness = authorized_count / max(1, total_evaluated)
+        self.telemetry.record_overfetch_effectiveness(tenant_id=tenant, ratio=effectiveness)
+        if effectiveness < 0.3:
+            logger.warning(
+                "[ALERT] aegismind_overfetch_effectiveness dropped below 0.3 threshold "
+                "(current=%.4f, tenant='%s')",
+                effectiveness,
+                tenant,
+            )
+
         logger.info(
             "Stage 5 Zanzibar authz: query_type='%s', evaluated=%d, allowed=%d, deny_rate=%.4f",
             query_type,
@@ -232,8 +268,12 @@ class RetrievalPipeline:
             authorized_count,
             actual_deny_rate,
         )
+        self.telemetry.record_stage_latency("stage_5_authz", time.perf_counter() - t5)
 
         if not allowed_candidates:
+            self.telemetry.record_stage_latency(
+                "total_query", time.perf_counter() - t_pipeline_start
+            )
             return PipelineResult(
                 query=query,
                 rewritten_query=rewritten_query_log,
@@ -246,13 +286,18 @@ class RetrievalPipeline:
             )
 
         # Stage 6: Cross-encoder reranking
+        t6 = time.perf_counter()
         reranked = await self.reranker.rerank(
             query=effective_query,
             candidates=allowed_candidates,
             top_n=len(allowed_candidates),
         )
+        rerank_duration = time.perf_counter() - t6
+        self.telemetry.record_reranker_latency(rerank_duration)
+        self.telemetry.record_stage_latency("stage_6_reranking", rerank_duration)
 
         # Stage 7: MMR diversity re-ordering
+        t7 = time.perf_counter()
         if apply_mmr and len(reranked) > 1:
             diversified = maximal_marginal_relevance(
                 candidates=reranked,
@@ -261,8 +306,10 @@ class RetrievalPipeline:
             )
         else:
             diversified = reranked[:top_k]
+        self.telemetry.record_stage_latency("stage_7_mmr", time.perf_counter() - t7)
 
         # Stage 8: Attach deep-linked citations
+        t8 = time.perf_counter()
         results: list[SearchResult] = []
         for item in diversified:
             chunk = item.chunk
@@ -293,6 +340,8 @@ class RetrievalPipeline:
                     citation=citation,
                 )
             )
+        self.telemetry.record_stage_latency("stage_8_citations", time.perf_counter() - t8)
+        self.telemetry.record_stage_latency("total_query", time.perf_counter() - t_pipeline_start)
 
         return PipelineResult(
             query=query,

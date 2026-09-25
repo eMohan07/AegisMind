@@ -4,11 +4,16 @@ import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, Request, status
+from fastapi import FastAPI, Request, Response, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, RedirectResponse
 
 from aegismind_core.mcp_server import create_mcp_router
+from aegismind_core.observability import (
+    CorrelationIdAndTracingMiddleware,
+    init_tracing,
+    render_prometheus_metrics,
+)
 from aegismind_core.routes import CoreState, create_routes
 
 logger = logging.getLogger(__name__)
@@ -68,6 +73,12 @@ def create_app(state: CoreState | None = None) -> FastAPI:
     # Attach state to app
     app.state.core = app_state
 
+    # Initialize OpenTelemetry tracer
+    init_tracing("aegismind-core")
+
+    # Add correlation ID and tracing middleware
+    app.add_middleware(CorrelationIdAndTracingMiddleware)
+
     # Setup CORS middleware
     app.add_middleware(
         CORSMiddleware,
@@ -90,6 +101,14 @@ def create_app(state: CoreState | None = None) -> FastAPI:
     @app.get("/", include_in_schema=False)
     async def root_redirect() -> RedirectResponse:
         return RedirectResponse(url="/docs")
+
+    # Prometheus metrics exposition endpoint
+    @app.get("/metrics", tags=["observability"], include_in_schema=False)
+    async def metrics_endpoint() -> Response:
+        return Response(
+            content=render_prometheus_metrics(),
+            media_type="text/plain; version=0.0.4; charset=utf-8",
+        )
 
     # Liveness and readiness probes
     @app.get("/healthz", tags=["health"])
