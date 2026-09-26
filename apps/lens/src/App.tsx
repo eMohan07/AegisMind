@@ -3,7 +3,9 @@ import { Chat } from "@/components/Chat";
 import { Search } from "@/components/Search";
 import { Connectors } from "@/components/Connectors";
 import { Access } from "@/components/Access";
-import { Automation } from "@/components/Automation";
+import { Datasets } from "@/components/Datasets";
+import { Notes } from "@/components/Notes";
+import { LocalTools } from "@/components/LocalTools";
 import { CommandPalette } from "@/components/CommandPalette";
 import { ResourcePicker } from "@/components/ResourcePicker";
 import { Button } from "@/components/ui/button";
@@ -17,10 +19,12 @@ import {
   Command as CommandIcon,
   User,
   Building2,
-  Workflow,
+  Database,
+  BookOpen,
+  Terminal,
 } from "lucide-react";
 
-type ActiveTab = "chat" | "search" | "connectors" | "access" | "automation";
+type ActiveTab = "chat" | "search" | "connectors" | "access" | "datasets" | "notes" | "tools";
 
 export function App() {
   const [activeTab, setActiveTab] = React.useState<ActiveTab>("chat");
@@ -28,6 +32,7 @@ export function App() {
   const [currentUserId, setCurrentUserId] = React.useState("alice");
   const [isCommandOpen, setIsCommandOpen] = React.useState(false);
   const [isResourcePickerOpen, setIsResourcePickerOpen] = React.useState(false);
+  const [initialChatQuery, setInitialChatQuery] = React.useState<string | undefined>(undefined);
 
   return (
     <div className="min-h-screen bg-background text-foreground flex flex-col">
@@ -102,15 +107,39 @@ export function App() {
               </button>
               <button
                 type="button"
-                onClick={() => setActiveTab("automation")}
+                onClick={() => setActiveTab("datasets")}
                 className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md transition-colors ${
-                  activeTab === "automation"
+                  activeTab === "datasets"
                     ? "bg-secondary text-foreground font-medium shadow-xs"
                     : "text-muted-foreground hover:text-foreground hover:bg-muted/50"
                 }`}
               >
-                <Workflow className="h-3.5 w-3.5 text-orange-400" />
-                Automation (n8n)
+                <Database className="h-3.5 w-3.5 text-primary" />
+                Datasets
+              </button>
+              <button
+                type="button"
+                onClick={() => setActiveTab("notes")}
+                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md transition-colors ${
+                  activeTab === "notes"
+                    ? "bg-secondary text-foreground font-medium shadow-xs"
+                    : "text-muted-foreground hover:text-foreground hover:bg-muted/50"
+                }`}
+              >
+                <BookOpen className="h-3.5 w-3.5 text-primary" />
+                Notes
+              </button>
+              <button
+                type="button"
+                onClick={() => setActiveTab("tools")}
+                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md transition-colors ${
+                  activeTab === "tools"
+                    ? "bg-secondary text-foreground font-medium shadow-xs"
+                    : "text-muted-foreground hover:text-foreground hover:bg-muted/50"
+                }`}
+              >
+                <Terminal className="h-3.5 w-3.5 text-primary" />
+                Local Tools
               </button>
             </nav>
           </div>
@@ -176,7 +205,12 @@ export function App() {
       {/* Main Content Area */}
       <main className="flex-1">
         {activeTab === "chat" && (
-          <Chat currentTenantId={currentTenantId} currentUserId={currentUserId} />
+          <Chat
+            currentTenantId={currentTenantId}
+            currentUserId={currentUserId}
+            initialQuery={initialChatQuery}
+            onClearInitialQuery={() => setInitialChatQuery(undefined)}
+          />
         )}
         {activeTab === "search" && (
           <Search currentTenantId={currentTenantId} currentUserId={currentUserId} />
@@ -185,7 +219,20 @@ export function App() {
         {activeTab === "access" && (
           <Access currentTenantId={currentTenantId} currentUserId={currentUserId} />
         )}
-        {activeTab === "automation" && <Automation />}
+        {activeTab === "datasets" && (
+          <Datasets
+            currentTenantId={currentTenantId}
+            currentUserId={currentUserId}
+            onNavigateToChat={(query) => {
+              if (query) {
+                setInitialChatQuery(`What are the key points in ${query}?`);
+              }
+              setActiveTab("chat");
+            }}
+          />
+        )}
+        {activeTab === "notes" && <Notes />}
+        {activeTab === "tools" && <LocalTools />}
       </main>
 
       {/* Footer Status Bar */}

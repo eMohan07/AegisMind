@@ -3,7 +3,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
-import { streamChat, type Citation } from "@/lib/api";
+import { streamChat, listModels, type Citation, type ModelInfo } from "@/lib/api";
 import {
   Send,
   Square,
@@ -14,6 +14,7 @@ import {
   Sparkles,
   FileText,
   Lock,
+  Cpu,
 } from "lucide-react";
 
 interface Message {
@@ -28,9 +29,16 @@ interface Message {
 interface ChatProps {
   currentTenantId: string;
   currentUserId: string;
+  initialQuery?: string;
+  onClearInitialQuery?: () => void;
 }
 
-export function Chat({ currentTenantId, currentUserId }: ChatProps) {
+export function Chat({
+  currentTenantId,
+  currentUserId,
+  initialQuery,
+  onClearInitialQuery,
+}: ChatProps) {
   const [messages, setMessages] = React.useState<Message[]>([
     {
       id: "msg-welcome",
@@ -41,6 +49,8 @@ export function Chat({ currentTenantId, currentUserId }: ChatProps) {
     },
   ]);
   const [inputQuery, setInputQuery] = React.useState("");
+  const [modelInfo, setModelInfo] = React.useState<ModelInfo | null>(null);
+  const [selectedModel, setSelectedModel] = React.useState<string>("");
   const [isStreaming, setIsStreaming] = React.useState(false);
   const [currentThinking, setCurrentThinking] = React.useState<string | null>(null);
   const [selectedCitation, setSelectedCitation] = React.useState<Citation | null>(null);
@@ -54,6 +64,24 @@ export function Chat({ currentTenantId, currentUserId }: ChatProps) {
   React.useEffect(() => {
     scrollToBottom();
   }, [messages, currentThinking]);
+
+  React.useEffect(() => {
+    listModels()
+      .then((info) => {
+        setModelInfo(info);
+        if (info.active_model) {
+          setSelectedModel(info.active_model);
+        }
+      })
+      .catch(() => {});
+  }, []);
+
+  React.useEffect(() => {
+    if (initialQuery) {
+      setInputQuery(initialQuery);
+      onClearInitialQuery?.();
+    }
+  }, [initialQuery, onClearInitialQuery]);
 
   const handleSend = () => {
     if (!inputQuery.trim() || isStreaming) return;
@@ -88,6 +116,7 @@ export function Chat({ currentTenantId, currentUserId }: ChatProps) {
       query,
       tenant_id: currentTenantId,
       user_id: currentUserId,
+      model: selectedModel || undefined,
       onThinking: (status) => {
         setCurrentThinking(status);
       },
@@ -164,6 +193,27 @@ export function Chat({ currentTenantId, currentUserId }: ChatProps) {
             <Badge variant="outline" className="font-mono text-[11px] text-primary">
               {currentUserId}
             </Badge>
+            <div className="flex items-center gap-1.5 ml-2 border-l border-border/60 pl-2">
+              <Cpu className="h-3.5 w-3.5 text-primary" />
+              <select
+                value={selectedModel}
+                onChange={(e) => setSelectedModel(e.target.value)}
+                className="bg-transparent text-xs font-mono text-foreground focus:outline-none cursor-pointer"
+                title="Select Ollama model"
+              >
+                {modelInfo?.models && modelInfo.models.length > 0 ? (
+                  modelInfo.models.map((m) => (
+                    <option key={m} value={m} className="bg-card">
+                      {m}
+                    </option>
+                  ))
+                ) : (
+                  <option value="llama3.2:latest" className="bg-card">
+                    llama3.2:latest
+                  </option>
+                )}
+              </select>
+            </div>
           </div>
         </div>
 

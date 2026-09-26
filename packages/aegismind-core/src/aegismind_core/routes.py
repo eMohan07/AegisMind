@@ -30,6 +30,14 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field
 
 from aegismind_core.adapters.llm import get_llm_adapter
+from aegismind_core.agent import (
+    AgentRunResult,
+    LocalKnowledgeSearchAdapter,
+    NoteCreatorAdapter,
+    SandboxedCommandRunnerAdapter,
+    SovereignAgentLoop,
+    SystemFileReaderAdapter,
+)
 from aegismind_core.budgeting import apply_context_budget
 from aegismind_core.observability import trace_span
 from aegismind_core.ports.llm import LLMPort
@@ -137,6 +145,35 @@ class AuditLogEntry(BaseModel):
     action: str = Field(..., description="Action name executed")
     timestamp: datetime = Field(default_factory=lambda: datetime.now(UTC))
     metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class AgentChatApiRequest(BaseModel):
+    """Payload for invoking the sovereign local agent."""
+
+    model_config = ConfigDict(frozen=True)
+
+    prompt: str = Field(..., description="Prompt or task instruction for the sovereign agent")
+    model: str | None = Field(default=None, description="Target Ollama model name")
+    system_instruction: str | None = Field(default=None, description="Custom system instruction")
+    allowed_roots: list[str] = Field(
+        default_factory=lambda: [".", "./storage"],
+        description="Allowlisted directories for file reading",
+    )
+    notes_dir: str = Field(default="./storage/notes", description="Notes destination directory")
+
+
+class NoteSummary(BaseModel):
+    """Summary record for a stored markdown note."""
+
+    model_config = ConfigDict(frozen=True)
+
+    slug: str
+    title: str
+    tags: list[str]
+    created_at: str
+    source_query: str | None = None
+    preview: str
+    path: str
 
 
 # --- Storage / State Container ---
@@ -874,6 +911,168 @@ def create_routes(state: CoreState) -> APIRouter:
         if not deleted:
             raise HTTPException(status_code=404, detail=f"DLQ item '{item_id}' not found")
         return {"status": "deleted", "id": item_id}
+
+    # Helper for frontmatter parsing
+    def _parse_note_frontmatter(content: str) -> tuple[dict[str, Any], str]:
+        if not content.startswith("---"):
+            return {}, content
+        parts = content.split("---", 2)
+        if len(parts) < 3:
+            return {}, content
+        frontmatter_raw = parts[1]
+        body = parts[2].strip()
+        meta: dict[str, Any] = {}
+        for line in frontmatter_raw.splitlines():
+            if ":" in line:
+                k, v = line.split(":", 1)
+                k = k.strip()
+                v = v.strip().strip("\"'")
+                if v.startswith("[") and v.endswith("]"):
+                    inner = v[1:-1].strip()
+                    meta[k] = [t.strip().strip("\"'") for t in inner.split(",") if t.strip()]
+                else:
+                    meta[k] = v
+        return meta, body
+
+    # 13. POST /api/v1/agent/chat: Local Sovereign Agent chat with sandboxed tool calling
+    @router.post("/agent/chat", response_model=AgentRunResult, tags=["agent"])
+    async def agent_chat(req: AgentChatApiRequest) -> AgentRunResult:
+        """Run the sovereign agent ReAct loop with local sandboxed tools."""
+        from pathlib import Path
+
+        from aegismind_retrieval.adapters_local_embed import LocalDeterministicEmbedderAdapter
+
+        vs = state.vector_store
+        embedder = (
+            getattr(state.retrieval_pipeline, "embedder", None)
+            if state.retrieval_pipeline
+            else None
+        )
+        if embedder is None:
+            embedder = LocalDeterministicEmbedderAdapter(dimension=64)
+
+        search_tool = LocalKnowledgeSearchAdapter(vector_store=vs, embedder=embedder)
+        file_tool = SystemFileReaderAdapter(allowed_roots=req.allowed_roots)
+        note_tool = NoteCreatorAdapter(notes_dir=req.notes_dir)
+        command_tool = SandboxedCommandRunnerAdapter(
+            audit_recorder=state.record_audit,
+            working_dir=Path.cwd(),
+        )
+
+        agent_loop = SovereignAgentLoop(
+            search_tool=search_tool,
+            file_reader_tool=file_tool,
+            note_tool=note_tool,
+            command_tool=command_tool,
+            model=req.model,
+            audit_recorder=state.record_audit,
+        )
+
+        result = await agent_loop.run(
+            prompt=req.prompt,
+            system_instruction=req.system_instruction,
+        )
+
+        state.record_audit(
+            event_type="agent",
+            principal_id="local_agent",
+            action="agent_chat_complete",
+            metadata={
+                "prompt": req.prompt,
+                "total_tool_calls": result.total_tool_calls,
+                "actions": [a.tool_name for a in result.actions_taken],
+            },
+        )
+        return result
+
+    # 14. GET /api/v1/notes: List saved notes with frontmatter metadata
+    @router.get("/notes", response_model=list[NoteSummary], tags=["notes"])
+    async def list_notes(
+        notes_dir: str = Query("./storage/notes", description="Notes directory"),
+        tag: str | None = Query(None, description="Filter by tag"),
+    ) -> list[NoteSummary]:
+        """List notes stored by the local sovereign agent."""
+        from pathlib import Path
+
+        dir_path = Path(notes_dir).resolve()  # noqa: ASYNC240
+        if not dir_path.exists():  # noqa: ASYNC240
+            return []
+
+        summaries: list[NoteSummary] = []
+        for file_path in dir_path.glob("*.md"):  # noqa: ASYNC240
+            if not file_path.is_file():  # noqa: ASYNC240
+                continue
+            try:
+                raw_text = file_path.read_text(encoding="utf-8", errors="replace")  # noqa: ASYNC240
+                meta, body = _parse_note_frontmatter(raw_text)
+                title = meta.get("title") or file_path.stem.replace("_", " ").title()
+                raw_tags = meta.get("tags") or []
+                tags = raw_tags if isinstance(raw_tags, list) else [str(raw_tags)]
+                created_at = (
+                    meta.get("created_at")
+                    or datetime.fromtimestamp(file_path.stat().st_ctime, tz=UTC).isoformat()  # noqa: ASYNC240
+                )
+                source_query = meta.get("source_query")
+
+                if tag and tag.lower() not in [t.lower() for t in tags]:
+                    continue
+
+                preview = body[:200] + ("..." if len(body) > 200 else "")
+                summaries.append(
+                    NoteSummary(
+                        slug=file_path.name,
+                        title=title,
+                        tags=tags,
+                        created_at=str(created_at),
+                        source_query=source_query,
+                        preview=preview,
+                        path=str(file_path),
+                    )
+                )
+            except Exception as exc:
+                logger.warning("Error reading note %s: %s", file_path, exc)
+
+        summaries.sort(key=lambda s: s.created_at, reverse=True)
+        return summaries
+
+    # 15. GET /api/v1/notes/{slug}: Get full note content
+    @router.get("/notes/{slug}", tags=["notes"])
+    async def get_note_detail(
+        slug: str,
+        notes_dir: str = Query("./storage/notes"),
+    ) -> dict[str, Any]:
+        """Retrieve full content of a specific note."""
+        from pathlib import Path
+
+        file_path = (Path(notes_dir) / slug).resolve()  # noqa: ASYNC240
+        notes_root = Path(notes_dir).resolve()  # noqa: ASYNC240
+        if not (file_path == notes_root or notes_root in file_path.parents):
+            raise HTTPException(status_code=403, detail="Invalid note path traversal")
+        if not file_path.exists() or not file_path.is_file():  # noqa: ASYNC240
+            raise HTTPException(status_code=404, detail=f"Note '{slug}' not found")
+
+        raw_text = file_path.read_text(encoding="utf-8", errors="replace")  # noqa: ASYNC240
+        meta, body = _parse_note_frontmatter(raw_text)
+        return {
+            "slug": slug,
+            "title": meta.get("title") or file_path.stem,
+            "tags": meta.get("tags", []),
+            "created_at": meta.get("created_at"),
+            "source_query": meta.get("source_query"),
+            "content": body,
+            "raw": raw_text,
+        }
+
+    # 16. GET /api/v1/agent/tools: Live/recent feed of agent tool calls for UI transparency
+    @router.get("/agent/tools", tags=["agent"])
+    async def list_agent_tools(
+        limit: int = Query(50, ge=1, le=200),
+    ) -> list[dict[str, Any]]:
+        """Return chronological feed of recent local sovereign agent tool actions."""
+        agent_entries = [
+            e.model_dump() for e in reversed(state.audit_log) if e.event_type == "agent_tool"
+        ]
+        return agent_entries[:limit]
 
     return router
 

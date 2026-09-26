@@ -112,6 +112,7 @@ pythonpath = [
     "connectors/zendesk/src",
     "connectors/granola/src",
     "connectors/weblink/src",
+    "connectors/local_filesystem/src",
 ]
 markers = [
     "permission: marks tests as permission verification tests",

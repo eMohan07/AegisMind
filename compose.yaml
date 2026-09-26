@@ -41,7 +41,7 @@ services:
       - aegismind-net
 
   tei-embedder:
-    image: ghcr.io/huggingface/text-embeddings-inference:cpu-1.5
+    image: ghcr.io/huggingface/text-embeddings-inference:cpu-1.6
     container_name: aegismind-tei-embedder
     restart: unless-stopped
     command: --model-id BAAI/bge-m3 --port 80
@@ -55,7 +55,7 @@ services:
       - aegismind-net
 
   tei-reranker:
-    image: ghcr.io/huggingface/text-embeddings-inference:cpu-1.5
+    image: ghcr.io/huggingface/text-embeddings-inference:cpu-1.6
     container_name: aegismind-tei-reranker
     restart: unless-stopped
     command: --model-id BAAI/bge-reranker-v2-m3 --port 80
@@ -96,6 +96,10 @@ services:
       TEI_RERANKER_URL: http://tei-reranker:80
       DOCLING_URL: http://docling:5001
       AEGISMIND_MASTER_KEY: ${AEGISMIND_MASTER_KEY:-0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef}
+      OLLAMA_URL: ${OLLAMA_URL:-http://host.docker.internal:11434}
+      OLLAMA_MODEL: ${OLLAMA_MODEL:-llama3.2:latest}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     ports:
       - "${AGORA_PORT:-8000}:8000"
     depends_on:
