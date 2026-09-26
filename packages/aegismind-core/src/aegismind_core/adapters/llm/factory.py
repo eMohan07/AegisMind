@@ -21,9 +21,7 @@ def get_llm_adapter(provider: str | None = None) -> LLMPort:
       LLM_API_KEY: optional API key for hosted providers
       LLM_CONTEXT_WINDOW: token limit for context window
     """
-    selected_provider = (
-        provider or os.environ.get("LLM_PROVIDER") or "ollama"
-    ).lower().strip()
+    selected_provider = (provider or os.environ.get("LLM_PROVIDER") or "ollama").lower().strip()
 
     if selected_provider in {"hosted", "openai", "vllm", "together", "azure"}:
         base_url = os.environ.get("LLM_BASE_URL") or "https://api.openai.com/v1"

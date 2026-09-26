@@ -118,9 +118,7 @@ class OllamaAdapter:
                 return ""
 
             async with httpx.AsyncClient(timeout=60.0) as client:
-                resp = await client.post(
-                    f"{base_url}/api/generate", json=payload, timeout=60.0
-                )
+                resp = await client.post(f"{base_url}/api/generate", json=payload, timeout=60.0)
                 if resp.status_code == 200:
                     data = resp.json()
                     return str(data.get("response", "")).strip()
