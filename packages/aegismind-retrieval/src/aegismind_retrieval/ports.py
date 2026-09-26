@@ -9,9 +9,9 @@ from pydantic import BaseModel, ConfigDict, Field
 class ScoredChunk(BaseModel):
     """Chunk paired with a similarity, fusion, or reranking score."""
 
-    model_config = ConfigDict(frozen=True)
+    model_config = ConfigDict(frozen=True, arbitrary_types_allowed=True)
 
-    chunk: Chunk = Field(..., description="Retrieved chunk payload")
+    chunk: Any = Field(..., description="Retrieved chunk payload")
     score: float = Field(..., description="Relevance or similarity score")
 
 

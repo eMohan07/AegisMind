@@ -19,6 +19,10 @@ spicedb = [
     "grpcio>=1.66",
 ]
 
+[project.entry-points."aegismind.authz"]
+memory = "aegismind_adapters.authz_memory:MemoryAuthzAdapter"
+spicedb = "aegismind_adapters.authz_spicedb:SpiceDBAuthzAdapter"
+
 [tool.setuptools.packages.find]
 where = ["src"]
 

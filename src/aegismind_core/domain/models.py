@@ -49,9 +49,9 @@ class Chunk(BaseModel):
 class ScoredChunk(BaseModel):
     """Chunk paired with similarity or relevance score."""
 
-    model_config = ConfigDict(frozen=True)
+    model_config = ConfigDict(frozen=True, arbitrary_types_allowed=True)
 
-    chunk: Chunk
+    chunk: Any
     score: float = Field(..., description="Similarity or reranker relevance score")
 
 
@@ -83,10 +83,10 @@ class RetrievalQuery(BaseModel):
 class RetrievalResult(BaseModel):
     """Final response returned from permission guarded retrieval."""
 
-    model_config = ConfigDict(frozen=True)
+    model_config = ConfigDict(frozen=True, arbitrary_types_allowed=True)
 
     query_text: str
-    chunks: list[ScoredChunk]
+    chunks: list[Any]
     total_candidates_evaluated: int = Field(
         ...,
         description="Total candidates fetched during overfetch phase",
