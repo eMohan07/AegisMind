@@ -1,0 +1,24 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "aegismind-connector-local-filesystem"
+version = "0.0.1"
+description = "Sovereign local filesystem connector with sensitive path denylist and incremental sync"
+requires-python = ">=3.12"
+dependencies = [
+    "aegismind-types",
+    "aegismind-connector-sdk",
+    "pydantic>=2.7",
+]
+
+[project.entry-points."aegismind.connectors"]
+local_filesystem = "aegismind_connector_local_filesystem:get_connector"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.uv.sources]
+aegismind-types = { workspace = true }
+aegismind-connector-sdk = { workspace = true }
