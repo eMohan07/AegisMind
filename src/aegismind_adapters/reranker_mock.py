@@ -22,7 +22,7 @@ class MockRerankerAdapter(RerankerPort):
         self,
         query: str,
         candidates: list[ScoredChunk],
-        top_k: int,
+        top_n: int,
     ) -> list[ScoredChunk]:
         query_words = set(query.lower().split())
         reranked: list[ScoredChunk] = []
@@ -34,4 +34,4 @@ class MockRerankerAdapter(RerankerPort):
             reranked.append(ScoredChunk(chunk=candidate.chunk, score=round(combined_score, 4)))
 
         reranked.sort(key=lambda sc: sc.score, reverse=True)
-        return reranked[:top_k]
+        return reranked[:top_n]

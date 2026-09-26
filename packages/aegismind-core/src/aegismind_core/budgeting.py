@@ -12,6 +12,7 @@ from aegismind_core.ports.llm import LLMPort
 
 logger = logging.getLogger(__name__)
 
+
 @dataclass(frozen=True)
 class BudgetedContextResult[T]:
     """Outcome of context budgeting and token constraint enforcement."""

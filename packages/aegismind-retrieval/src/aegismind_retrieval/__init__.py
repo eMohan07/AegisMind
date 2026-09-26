@@ -21,12 +21,15 @@ from aegismind_retrieval.ports import (
     QueryRewriterPort,
     RerankerPort,
     ScoredChunk,
+    TelemetryPort,
     VectorStorePort,
 )
 from aegismind_retrieval.rrf import RRF_DEFAULT_K, fuse_dense_sparse, reciprocal_rank_fusion
+from aegismind_retrieval.telemetry import NoOpTelemetryAdapter
 
 __all__ = [
     "DEFAULT_LAMBDA_MULT",
+    "NoOpTelemetryAdapter",
     "RRF_DEFAULT_K",
     "EmbedderPort",
     "LLMQueryRewriterAdapter",
@@ -44,6 +47,7 @@ __all__ = [
     "ScoredChunk",
     "TeiEmbedderAdapter",
     "TeiRerankerAdapter",
+    "TelemetryPort",
     "VectorStorePort",
     "fuse_dense_sparse",
     "maximal_marginal_relevance",

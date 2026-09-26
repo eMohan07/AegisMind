@@ -2,7 +2,7 @@ name: aegismind
 
 services:
   postgres:
-    image: timescale/timescaledb-ha:pg17
+    image: pgvector/pgvector:pg17
     container_name: aegismind-postgres
     restart: unless-stopped
     environment:
@@ -71,6 +71,8 @@ services:
   docling:
     image: ghcr.io/ds4sd/docling-serve:latest
     container_name: aegismind-docling
+    profiles:
+      - ocr
     restart: unless-stopped
     ports:
       - "${DOCLING_PORT:-5001}:5001"
@@ -135,8 +137,6 @@ services:
         condition: service_healthy
       spicedb:
         condition: service_started
-      docling:
-        condition: service_started
     networks:
       - aegismind-net
 
@@ -156,6 +156,49 @@ services:
     networks:
       - aegismind-net
 
+  n8n:
+    image: n8nio/n8n:latest
+    container_name: aegismind-n8n
+    restart: unless-stopped
+    ports:
+      - "${N8N_PORT:-5678}:5678"
+    environment:
+      # n8n core
+      N8N_HOST: ${N8N_HOST:-localhost}
+      N8N_PORT: 5678
+      N8N_PROTOCOL: ${N8N_PROTOCOL:-http}
+      WEBHOOK_URL: ${N8N_WEBHOOK_URL:-http://localhost:5678}
+      N8N_BASIC_AUTH_ACTIVE: "true"
+      N8N_BASIC_AUTH_USER: ${N8N_BASIC_AUTH_USER:-admin}
+      N8N_BASIC_AUTH_PASSWORD: ${N8N_BASIC_AUTH_PASSWORD:-aegismind_n8n_password}
+      # Persistence
+      DB_TYPE: sqlite
+      N8N_ENCRYPTION_KEY: ${N8N_ENCRYPTION_KEY:-aegismind_n8n_encryption_key_32ch}
+      # AegisMind connection details (pre-set as env vars for use in workflow expressions)
+      AEGISMIND_BASE_URL: http://agora:8000
+      AEGISMIND_API_KEY: ${AEGISMIND_API_KEY:-}
+      # Slack integration
+      SLACK_CHANNEL_ALERTS: ${SLACK_CHANNEL_ALERTS:-#aegismind-alerts}
+      SLACK_CHANNEL_DIGEST: ${SLACK_CHANNEL_DIGEST:-#aegismind-digest}
+      # Execution settings
+      EXECUTIONS_DATA_PRUNE: "true"
+      EXECUTIONS_DATA_MAX_AGE: 336          # 14 days in hours
+      N8N_METRICS: "true"
+    volumes:
+      - n8n_data:/home/node/.n8n
+      - ./n8n/workflows:/home/node/.n8n/workflows:ro  # auto-import on first start
+    depends_on:
+      agora:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:5678/healthz || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+    networks:
+      - aegismind-net
+
 networks:
   aegismind-net:
     driver: bridge
@@ -163,3 +206,4 @@ networks:
 volumes:
   postgres_data:
   tei_cache:
+  n8n_data:

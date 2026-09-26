@@ -442,7 +442,6 @@ class QdrantVectorStoreAdapter(VectorStorePort):
 
     async def upsert(self, chunks: list[Chunk]) -> None:
         """Upsert points into Qdrant collection."""
-        await self._fallback.upsert(chunks)
         if self._client is not None:
             points = [
                 {
@@ -457,17 +456,25 @@ class QdrantVectorStoreAdapter(VectorStorePort):
                 for c in chunks
             ]
             endpoint = f"{self.url}/collections/{self.collection_name}/points"
-            await self._client.put(endpoint, json={"points": points}, headers=self._headers())
+            try:
+                resp = await self._client.put(
+                    endpoint, json={"points": points}, headers=self._headers()
+                )
+                resp.raise_for_status()
+            except Exception as exc:
+                logger.warning("Qdrant upsert failed, falling back to memory: %s", exc)
+                await self._fallback.upsert(chunks)
+            return
+        await self._fallback.upsert(chunks)
 
-    async def query(
+    async def query_dense(
         self,
-        vector: list[float] | None = None,
-        sparse_vector: dict[int, float] | None = None,
+        vector: list[float],
         pre_filter: dict[str, Any] | None = None,
         top_k: int = 10,
     ) -> list[ScoredChunk]:
-        """Search points in Qdrant collection."""
-        if self._client is not None and vector is not None:
+        """Query Qdrant using dense vector with optional payload filtering."""
+        if self._client is not None:
             endpoint = f"{self.url}/collections/{self.collection_name}/points/search"
             payload: dict[str, Any] = {
                 "vector": vector,
@@ -479,7 +486,6 @@ class QdrantVectorStoreAdapter(VectorStorePort):
                 for k, v in pre_filter.items():
                     conditions.append({"key": f"metadata.{k}", "match": {"value": v}})
                 payload["filter"] = {"must": conditions}
-
             try:
                 resp = await self._client.post(endpoint, json=payload, headers=self._headers())
                 if resp.status_code == 200:
@@ -497,20 +503,83 @@ class QdrantVectorStoreAdapter(VectorStorePort):
                         for item in data
                     ]
             except Exception as exc:
-                logger.warning("Qdrant remote search failed, using fallback: %s", exc)
+                logger.warning("Qdrant dense search failed, using fallback: %s", exc)
+        return await self._fallback.query_dense(vector, pre_filter, top_k)
 
-        return await self._fallback.query(vector, sparse_vector, pre_filter, top_k)
+    async def query_lexical(
+        self,
+        query_text: str,
+        sparse_vector: dict[int, float] | None = None,
+        pre_filter: dict[str, Any] | None = None,
+        top_k: int = 10,
+    ) -> list[ScoredChunk]:
+        """Query Qdrant using sparse vector payload filtering with lexical fallback."""
+        if self._client is not None and sparse_vector is not None:
+            endpoint = f"{self.url}/collections/{self.collection_name}/points/search"
+            # Qdrant sparse vector payload: {"indices": [...], "values": [...]}
+            indices = list(sparse_vector.keys())
+            values = [sparse_vector[i] for i in indices]
+            payload: dict[str, Any] = {
+                "vector": {"name": "sparse", "vector": {"indices": indices, "values": values}},
+                "limit": top_k,
+                "with_payload": True,
+            }
+            if pre_filter:
+                conditions = [
+                    {"key": f"metadata.{k}", "match": {"value": v}}
+                    for k, v in pre_filter.items()
+                ]
+                payload["filter"] = {"must": conditions}
+            try:
+                resp = await self._client.post(endpoint, json=payload, headers=self._headers())
+                if resp.status_code == 200:
+                    data = resp.json().get("result", [])
+                    return [
+                        ScoredChunk(
+                            chunk=Chunk(
+                                id=str(item["id"]),
+                                document_id=item.get("payload", {}).get("document_id", ""),
+                                content=item.get("payload", {}).get("content", ""),
+                                metadata=item.get("payload", {}).get("metadata", {}),
+                            ),
+                            score=float(item.get("score", 0.0)),
+                        )
+                        for item in data
+                    ]
+            except Exception as exc:
+                logger.warning("Qdrant sparse search failed, using fallback: %s", exc)
+        return await self._fallback.query_lexical(query_text, sparse_vector, pre_filter, top_k)
+
+    async def query(
+        self,
+        vector: list[float] | None = None,
+        sparse_vector: dict[int, float] | None = None,
+        pre_filter: dict[str, Any] | None = None,
+        top_k: int = 10,
+    ) -> list[ScoredChunk]:
+        """Query Qdrant with hybrid or single-mode vector search."""
+        if vector is not None and sparse_vector is not None:
+            dense = await self.query_dense(vector, pre_filter, top_k)
+            lexical = await self.query_lexical("", sparse_vector, pre_filter, top_k)
+            return fuse_dense_sparse(dense, lexical)[:top_k]
+        if vector is not None:
+            return await self.query_dense(vector, pre_filter, top_k)
+        if sparse_vector is not None:
+            return await self.query_lexical("", sparse_vector, pre_filter, top_k)
 
     async def delete(self, chunk_ids: list[str]) -> bool:
         """Delete points from Qdrant."""
-        await self._fallback.delete(chunk_ids)
         if self._client is not None:
             endpoint = f"{self.url}/collections/{self.collection_name}/points/delete"
-            resp = await self._client.post(
-                endpoint, json={"points": chunk_ids}, headers=self._headers()
-            )
-            return resp.status_code == 200
-        return True
+            try:
+                resp = await self._client.post(
+                    endpoint, json={"points": chunk_ids}, headers=self._headers()
+                )
+                return resp.status_code == 200
+            except Exception as exc:
+                logger.warning("Qdrant delete failed, falling back to memory: %s", exc)
+                return await self._fallback.delete(chunk_ids)
+        return await self._fallback.delete(chunk_ids)
 
     async def get_by_document(self, document_id: str) -> list[Chunk]:
         """Retrieve active chunks for a document."""

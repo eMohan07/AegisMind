@@ -29,9 +29,7 @@ class HostedLLMAdapter:
         self.base_url = raw_url.rstrip("/")
         self.api_key = api_key or os.environ.get("LLM_API_KEY", "")
         self.default_model = model or os.environ.get("LLM_MODEL") or "gpt-4o-mini"
-        self.default_context_window = int(
-            os.environ.get("LLM_CONTEXT_WINDOW", str(context_window))
-        )
+        self.default_context_window = int(os.environ.get("LLM_CONTEXT_WINDOW", str(context_window)))
         self._client = client
 
     def _get_headers(self) -> dict[str, str]:
@@ -143,9 +141,7 @@ class HostedLLMAdapter:
                     json=payload,
                 ) as response:
                     if response.status_code != 200:
-                        logger.warning(
-                            "Hosted LLM stream returned status %d", response.status_code
-                        )
+                        logger.warning("Hosted LLM stream returned status %d", response.status_code)
                         return
                     async for line in response.aiter_lines():
                         if not line:

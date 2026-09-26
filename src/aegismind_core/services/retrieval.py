@@ -149,11 +149,11 @@ class RetrievalService:
                 authorized_candidates_count=0,
             )
 
-        # 4. Rerank allowed candidates to desired top_k
+        # 4. Rerank allowed candidates to desired top_n
         reranked = await self._reranker.rerank(
             query=query.query_text,
             candidates=allowed_candidates,
-            top_k=query.top_k,
+            top_n=query.top_k,
         )
 
         return RetrievalResult(

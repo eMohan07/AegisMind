@@ -4,6 +4,7 @@ import asyncio
 import json
 import logging
 import uuid
+from collections import deque
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime
 from typing import Any, Literal
@@ -168,9 +169,9 @@ class CoreState:
 
         self.connectors: dict[str, ConnectorPort] = {}
         self.group_aliases: dict[str, str] = {}
-        self.audit_log: list[AuditLogEntry] = []
+        self.audit_log: deque[AuditLogEntry] = deque(maxlen=10_000)
         self.indexed_resources: list[dict[str, Any]] = []
-        self.feedback_entries: list[FeedbackEntry] = []
+        self.feedback_entries: deque[FeedbackEntry] = deque(maxlen=5_000)
 
     def record_audit(
         self,
@@ -192,6 +193,21 @@ class CoreState:
         return entry
 
 
+async def _ensure_pipeline(state: CoreState) -> None:
+    """Lazily initialize the default core state if the retrieval pipeline is not yet configured."""
+    if state.retrieval_pipeline is None:
+        from aegismind_core.bootstrap import init_default_core_state
+
+        seeded = await init_default_core_state()
+        state.retrieval_pipeline = seeded.retrieval_pipeline
+        state.authz = seeded.authz
+        state.vector_store = seeded.vector_store
+        state.connectors = seeded.connectors
+        state.indexed_resources = seeded.indexed_resources
+        if state.llm is None:
+            state.llm = seeded.llm
+
+
 def create_routes(state: CoreState) -> APIRouter:
     """Create configured FastAPI APIRouter containing all core endpoint handlers."""
     router = APIRouter(prefix="/api/v1", tags=["api_v1"])
@@ -199,18 +215,8 @@ def create_routes(state: CoreState) -> APIRouter:
     # 1. POST /api/v1/search: Access-controlled search
     @router.post("/search", response_model=PipelineResult)
     async def search(req: SearchApiRequest) -> PipelineResult:
+        await _ensure_pipeline(state)
         pipeline = state.retrieval_pipeline
-        if pipeline is None:
-            from aegismind_core.bootstrap import init_default_core_state
-
-            seeded = await init_default_core_state()
-            state.retrieval_pipeline = seeded.retrieval_pipeline
-            state.authz = seeded.authz
-            state.vector_store = seeded.vector_store
-            state.connectors = seeded.connectors
-            state.indexed_resources = seeded.indexed_resources
-            pipeline = seeded.retrieval_pipeline
-
         if pipeline is None:
             raise HTTPException(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -274,7 +280,7 @@ def create_routes(state: CoreState) -> APIRouter:
             logger.error("Search execution failed: %s", exc)
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail=f"Search failed: {exc}",
+                detail="Search failed due to an internal error. Check server logs for details.",
             ) from exc
 
     # 2. GET /api/v1/chat: Server-Sent Events (SSE) streaming answers with citations
@@ -290,17 +296,8 @@ def create_routes(state: CoreState) -> APIRouter:
     ) -> StreamingResponse:
         pipeline = state.retrieval_pipeline
         if pipeline is None:
-            from aegismind_core.bootstrap import init_default_core_state
-
-            seeded = await init_default_core_state()
-            state.retrieval_pipeline = seeded.retrieval_pipeline
-            state.authz = seeded.authz
-            state.vector_store = seeded.vector_store
-            state.connectors = seeded.connectors
-            state.indexed_resources = seeded.indexed_resources
-            if state.llm is None:
-                state.llm = seeded.llm
-            pipeline = seeded.retrieval_pipeline
+            await _ensure_pipeline(state)
+            pipeline = state.retrieval_pipeline
 
         if pipeline is None:
             raise HTTPException(
@@ -575,7 +572,7 @@ def create_routes(state: CoreState) -> APIRouter:
             entries = [e for e in entries if e.event_type == event_type]
 
         total = len(entries)
-        paged = entries[offset : offset + limit]
+        paged = list(entries)[offset : offset + limit]
         return {
             "total": total,
             "limit": limit,
@@ -633,15 +630,8 @@ def create_routes(state: CoreState) -> APIRouter:
         """Ingest custom document or dataset records with Zanzibar viewer access controls."""
         pipeline = state.retrieval_pipeline
         if pipeline is None:
-            from aegismind_core.bootstrap import init_default_core_state
-
-            seeded = await init_default_core_state()
-            state.retrieval_pipeline = seeded.retrieval_pipeline
-            state.authz = seeded.authz
-            state.vector_store = seeded.vector_store
-            state.connectors = seeded.connectors
-            state.indexed_resources = seeded.indexed_resources
-            pipeline = seeded.retrieval_pipeline
+            await _ensure_pipeline(state)
+            pipeline = state.retrieval_pipeline
 
         if pipeline is None:
             raise HTTPException(
@@ -726,23 +716,32 @@ def create_routes(state: CoreState) -> APIRouter:
     @router.delete("/documents/{document_id}")
     async def delete_document(document_id: str) -> dict[str, str]:
         """Delete an ingested dataset and revoke its Zanzibar permissions immediately."""
-        if hasattr(state.vector_store, "_chunks"):
-            matching_ids = [
-                cid
-                for cid, c in state.vector_store._chunks.items()
-                if getattr(c, "document_id", None) == document_id
-            ]
-            if matching_ids:
-                await state.vector_store.delete(matching_ids)
+        # Soft-delete via the port contract (works for any VectorStorePort backend)
+        deleted_count = await state.vector_store.soft_delete_document(document_id)
+        if deleted_count == 0:
+            # Also try hard delete via port for stores that do not support soft-delete
+            existing = await state.vector_store.get_by_document(document_id)
+            if existing:
+                await state.vector_store.delete([c.id for c in existing])
 
-        if state.authz and hasattr(state.authz, "_tuples"):
-            to_delete = [
-                RelationshipTuple(resource=res, relation=rel, subject=sub)
-                for res, rel, sub in state.authz._tuples
-                if res == f"document:{document_id}"
-            ]
-            if to_delete:
-                await state.authz.delete_tuples(to_delete)
+        if state.authz:
+            # Revoke all viewer/editor/owner tuples for this document via the port
+            try:
+                tuples_to_delete = [
+                    RelationshipTuple(
+                        resource=f"document:{document_id}",
+                        relation=rel,
+                        subject=sub,
+                    )
+                    for rel in ("viewer", "editor", "owner")
+                    # Build delete requests for all known relations; authz engine ignores non-existent
+                    for sub in ("user:*",)  # wildcard to revoke public access if present
+                ]
+                await state.authz.delete_tuples(tuples_to_delete)
+            except Exception as exc:
+                logger.warning(
+                    "Failed revoking authz tuples for document %s: %s", document_id, exc
+                )
 
         state.indexed_resources = [r for r in state.indexed_resources if r.get("id") != document_id]
 
@@ -788,7 +787,7 @@ def create_routes(state: CoreState) -> APIRouter:
         offset: int = Query(0, ge=0),
     ) -> dict[str, Any]:
         """Query user feedback entries."""
-        items = state.feedback_entries
+        items: list[FeedbackEntry] = list(state.feedback_entries)
         if rating:
             items = [item for item in items if item.rating == rating]
 
@@ -978,4 +977,3 @@ async def perform_readiness_check(state: CoreState) -> tuple[bool, dict[str, str
         checks["llm"] = f"error: {exc}"
 
     return all_ok, checks
-

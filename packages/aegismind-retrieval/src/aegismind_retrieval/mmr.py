@@ -70,15 +70,18 @@ def maximal_marginal_relevance(
         return 1.0
 
     # Pick the highest-ranked candidate first
-    best_initial = max(remaining, key=lambda c: c.score)
-    selected.append(best_initial)
-    remaining.remove(best_initial)
+    best_initial_idx = max(range(len(remaining)), key=lambda i: remaining[i].score)
+    selected.append(remaining[best_initial_idx])
+    # Use a set of remaining indices for O(1) removal tracking
+    remaining_indices: set[int] = set(range(len(remaining)))
+    remaining_indices.discard(best_initial_idx)
 
-    while remaining and len(selected) < top_n:
-        best_candidate: ScoredChunk | None = None
+    while remaining_indices and len(selected) < top_n:
+        best_candidate_idx: int | None = None
         best_mmr_score = -float("inf")
 
-        for cand in remaining:
+        for idx in remaining_indices:
+            cand = remaining[idx]
             rel = norm_score(cand)
             # Find maximum similarity between candidate and any already-selected chunk
             max_sim_to_selected = max(
@@ -88,12 +91,12 @@ def maximal_marginal_relevance(
 
             if mmr_score > best_mmr_score:
                 best_mmr_score = mmr_score
-                best_candidate = cand
+                best_candidate_idx = idx
 
-        if best_candidate is None:
+        if best_candidate_idx is None:
             break
 
-        selected.append(best_candidate)
-        remaining.remove(best_candidate)
+        selected.append(remaining[best_candidate_idx])
+        remaining_indices.discard(best_candidate_idx)
 
     return selected

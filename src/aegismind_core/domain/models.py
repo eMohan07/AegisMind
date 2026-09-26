@@ -5,6 +5,7 @@ from typing import Any
 from pydantic import BaseModel, ConfigDict, Field
 
 from aegismind_core.domain.permissions import ConsistencyToken
+from aegismind_types import Chunk
 
 
 class User(BaseModel):
@@ -51,7 +52,7 @@ class ScoredChunk(BaseModel):
 
     model_config = ConfigDict(frozen=True, arbitrary_types_allowed=True)
 
-    chunk: Any
+    chunk: Chunk = Field(..., description="Retrieved chunk")
     score: float = Field(..., description="Similarity or reranker relevance score")
 
 
@@ -86,7 +87,7 @@ class RetrievalResult(BaseModel):
     model_config = ConfigDict(frozen=True, arbitrary_types_allowed=True)
 
     query_text: str
-    chunks: list[Any]
+    chunks: list[Any]  # list[ScoredChunk] from either aegismind_retrieval or aegismind_core
     total_candidates_evaluated: int = Field(
         ...,
         description="Total candidates fetched during overfetch phase",

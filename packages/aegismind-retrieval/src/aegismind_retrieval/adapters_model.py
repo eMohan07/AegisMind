@@ -244,9 +244,7 @@ class MockRerankerAdapter(RerankerPort):
         query: str,
         candidates: list[ScoredChunk],
         top_n: int = 5,
-        top_k: int | None = None,
     ) -> list[ScoredChunk]:
-        limit = top_k if top_k is not None else top_n
         query_terms = set(query.lower().split())
         scored: list[ScoredChunk] = []
 
@@ -259,7 +257,7 @@ class MockRerankerAdapter(RerankerPort):
             scored.append(ScoredChunk(chunk=item.chunk, score=combined))
 
         scored.sort(key=lambda sc: sc.score, reverse=True)
-        return scored[:limit]
+        return scored[:top_n]
 
 
 class TeiEmbedderAdapter(EmbedderPort):
@@ -335,9 +333,7 @@ class TeiRerankerAdapter(RerankerPort):
         query: str,
         candidates: list[ScoredChunk],
         top_n: int = 5,
-        top_k: int | None = None,
     ) -> list[ScoredChunk]:
-        limit = top_k if top_k is not None else top_n
         if not candidates:
             return []
 
@@ -358,8 +354,8 @@ class TeiRerankerAdapter(RerankerPort):
                     if 0 <= idx < len(candidates):
                         scored.append(ScoredChunk(chunk=candidates[idx].chunk, score=score))
                 scored.sort(key=lambda sc: sc.score, reverse=True)
-                return scored[:limit]
+                return scored[:top_n]
             except Exception as exc:
                 logger.warning("TEI rerank call failed, falling back to mock: %s", exc)
 
-        return await self._fallback.rerank(query, candidates, limit)
+        return await self._fallback.rerank(query, candidates, top_n)

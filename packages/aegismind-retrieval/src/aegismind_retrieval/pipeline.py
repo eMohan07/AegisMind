@@ -132,10 +132,8 @@ class RetrievalPipeline:
         query_vector = await self.embedder.embed_query(effective_query)
         if sparse_query is not None:
             effective_sparse_query = sparse_query
-        elif hasattr(self.embedder, "embed_sparse_query"):
-            effective_sparse_query = await self.embedder.embed_sparse_query(effective_query)
         else:
-            effective_sparse_query = None
+            effective_sparse_query = await self.embedder.embed_sparse_query(effective_query)
         self.telemetry.record_stage_latency("stage_1_embedding", time.perf_counter() - t1)
 
         # Stage 2: Dual dense and lexical search (tenant and group scoped)
@@ -233,9 +231,16 @@ class RetrievalPipeline:
             consistency=enforced_consistency,
         )
 
+        if len(decisions) != len(unique_doc_ids):
+            raise RuntimeError(
+                f"AuthzPort.bulk_check returned {len(decisions)} decisions for "
+                f"{len(unique_doc_ids)} requested documents. Response length mismatch "
+                "violates the bulk_check contract."
+            )
+
         allowed_doc_ids = {
             doc_id
-            for doc_id, is_allowed in zip(unique_doc_ids, decisions, strict=False)
+            for doc_id, is_allowed in zip(unique_doc_ids, decisions, strict=True)
             if is_allowed
         }
 

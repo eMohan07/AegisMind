@@ -1,0 +1,82 @@
+﻿{
+  "name": "AegisMind — Connector Scheduled Sync",
+  "nodes": [
+    {
+      "parameters": { "rule": { "interval": [{ "field": "hours", "hoursInterval": 6 }] } },
+      "id": "cron-trigger",
+      "name": "Every 6 Hours",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [240, 300]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $env.AEGISMIND_BASE_URL }}/api/v1/connectors",
+        "sendHeaders": true,
+        "headerParameters": { "parameters": [{ "name": "X-API-Key", "value": "={{ $env.AEGISMIND_API_KEY }}" }] },
+        "options": {}
+      },
+      "id": "list-connectors",
+      "name": "GET /api/v1/connectors",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [460, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "const connectors = $input.item.json.connectors || [];\nreturn connectors.map(c => ({ json: { connector_name: c.name, action: 'sync', config: {} } }));"
+      },
+      "id": "split-connectors",
+      "name": "Split Into Connector Items",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [680, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.AEGISMIND_BASE_URL }}/api/v1/connectors",
+        "sendHeaders": true,
+        "headerParameters": { "parameters": [{ "name": "Content-Type", "value": "application/json" }, { "name": "X-API-Key", "value": "={{ $env.AEGISMIND_API_KEY }}" }] },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json) }}",
+        "options": { "timeout": 300000 }
+      },
+      "id": "trigger-sync",
+      "name": "POST /api/v1/connectors (sync)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [900, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "const results = $input.all();\nconst succeeded = results.filter(r => r.json.status === 'sync_finished').length;\nconst failed = results.length - succeeded;\nreturn [{ json: { total: results.length, succeeded, failed, timestamp: new Date().toISOString(), details: results.map(r => ({ connector: r.json.report?.connector_name || 'unknown', chunks: r.json.report?.chunks_indexed || 0 })) } }];"
+      },
+      "id": "aggregate-results",
+      "name": "Aggregate Sync Results",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1120, 300]
+    },
+    {
+      "parameters": { "resource": "message", "channel": "={{ $env.SLACK_CHANNEL_ALERTS }}", "text": ":arrows_counterclockwise: *AegisMind Sync Complete*\n>Connectors: *={{ $json.total }}* | OK: *={{ $json.succeeded }}* | Failed: *={{ $json.failed }}*\n>={{ $json.details.map(d => d.connector + ': ' + d.chunks + ' chunks').join(' | ') }}", "otherOptions": {} },
+      "id": "notify-sync-done",
+      "name": "Slack: Sync Summary",
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2.2,
+      "position": [1340, 300],
+      "credentials": { "slackApi": { "id": "slack-creds", "name": "Slack API" } }
+    }
+  ],
+  "connections": {
+    "Every 6 Hours": { "main": [[{ "node": "GET /api/v1/connectors", "type": "main", "index": 0 }]] },
+    "GET /api/v1/connectors": { "main": [[{ "node": "Split Into Connector Items", "type": "main", "index": 0 }]] },
+    "Split Into Connector Items": { "main": [[{ "node": "POST /api/v1/connectors (sync)", "type": "main", "index": 0 }]] },
+    "POST /api/v1/connectors (sync)": { "main": [[{ "node": "Aggregate Sync Results", "type": "main", "index": 0 }]] },
+    "Aggregate Sync Results": { "main": [[{ "node": "Slack: Sync Summary", "type": "main", "index": 0 }]] }
+  },
+  "settings": { "executionOrder": "v1", "saveManualExecutions": true },
+  "tags": ["aegismind", "connector", "sync"]
+}

@@ -3,6 +3,7 @@ import { Chat } from "@/components/Chat";
 import { Search } from "@/components/Search";
 import { Connectors } from "@/components/Connectors";
 import { Access } from "@/components/Access";
+import { Automation } from "@/components/Automation";
 import { CommandPalette } from "@/components/CommandPalette";
 import { ResourcePicker } from "@/components/ResourcePicker";
 import { Button } from "@/components/ui/button";
@@ -16,9 +17,10 @@ import {
   Command as CommandIcon,
   User,
   Building2,
+  Workflow,
 } from "lucide-react";
 
-type ActiveTab = "chat" | "search" | "connectors" | "access";
+type ActiveTab = "chat" | "search" | "connectors" | "access" | "automation";
 
 export function App() {
   const [activeTab, setActiveTab] = React.useState<ActiveTab>("chat");
@@ -98,6 +100,18 @@ export function App() {
                 <Network className="h-3.5 w-3.5 text-primary" />
                 Access Graph
               </button>
+              <button
+                type="button"
+                onClick={() => setActiveTab("automation")}
+                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md transition-colors ${
+                  activeTab === "automation"
+                    ? "bg-secondary text-foreground font-medium shadow-xs"
+                    : "text-muted-foreground hover:text-foreground hover:bg-muted/50"
+                }`}
+              >
+                <Workflow className="h-3.5 w-3.5 text-orange-400" />
+                Automation (n8n)
+              </button>
             </nav>
           </div>
 
@@ -171,6 +185,7 @@ export function App() {
         {activeTab === "access" && (
           <Access currentTenantId={currentTenantId} currentUserId={currentUserId} />
         )}
+        {activeTab === "automation" && <Automation />}
       </main>
 
       {/* Footer Status Bar */}

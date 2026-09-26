@@ -978,4 +978,3 @@ async def perform_readiness_check(state: CoreState) -> tuple[bool, dict[str, str
         checks["llm"] = f"error: {exc}"
 
     return all_ok, checks
-

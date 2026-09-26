@@ -100,7 +100,7 @@ async def test_hosted_llm_adapter_openai_compatible() -> None:
                 content = (
                     b'data: {"choices":[{"delta":{"content":"Hosted "}}]}\n\n'
                     b'data: {"choices":[{"delta":{"content":"stream"}}]}\n\n'
-                    b'data: [DONE]\n\n'
+                    b"data: [DONE]\n\n"
                 )
                 return httpx.Response(200, content=content)
             return httpx.Response(
