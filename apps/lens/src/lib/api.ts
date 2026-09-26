@@ -59,6 +59,40 @@ export interface AuditEvent {
   status: "allowed" | "denied" | "success" | "failure";
 }
 
+export interface ModelInfo {
+  models: string[];
+  active_model: string;
+  provider: string;
+}
+
+export interface IngestDocumentParams {
+  title: string;
+  content: string;
+  tenant_id?: string;
+  allowed_users?: string[];
+  document_id?: string;
+  uri?: string;
+}
+
+export interface IngestDocumentResponse {
+  status: string;
+  document_id: string;
+  title: string;
+  chunk_count: number;
+  allowed_users: string[];
+}
+
+export interface ResourceItem {
+  id: string;
+  title: string;
+  type: string;
+  connector: string;
+  last_indexed?: string;
+  chunk_count?: number;
+  allowed_users?: string[];
+  uri?: string;
+}
+
 const API_BASE = import.meta.env.VITE_API_BASE_URL || "/api/v1";
 
 export async function search(params: {
@@ -135,6 +169,7 @@ export function streamChat(params: {
   query: string;
   tenant_id: string;
   user_id: string;
+  model?: string;
   onToken: (token: string) => void;
   onThinking: (status: string) => void;
   onCitations: (citations: Citation[]) => void;
@@ -146,6 +181,9 @@ export function streamChat(params: {
   url.searchParams.set("tenant_id", params.tenant_id);
   url.searchParams.set("user_id", params.user_id);
   url.searchParams.set("principal_id", params.user_id);
+  if (params.model) {
+    url.searchParams.set("model", params.model);
+  }
 
   const eventSource = new EventSource(url.toString());
   const accumulatedCitations: Citation[] = [];
@@ -209,6 +247,67 @@ export function streamChat(params: {
   return () => {
     eventSource.close();
   };
+}
+
+export async function listModels(): Promise<ModelInfo> {
+  try {
+    const response = await fetch(`${API_BASE}/models`);
+    if (!response.ok) {
+      return {
+        models: ["llama3.2:latest", "llama3:latest"],
+        active_model: "llama3.2:latest",
+        provider: "ollama",
+      };
+    }
+    return response.json();
+  } catch {
+    return {
+      models: ["llama3.2:latest", "llama3:latest"],
+      active_model: "llama3.2:latest",
+      provider: "ollama",
+    };
+  }
+}
+
+export async function listIndexedResources(): Promise<ResourceItem[]> {
+  try {
+    const response = await fetch(`${API_BASE}/resources`);
+    if (!response.ok) {
+      return [];
+    }
+    const data = await response.json();
+    return data.resources ?? [];
+  } catch {
+    return [];
+  }
+}
+
+export async function ingestDocument(params: IngestDocumentParams): Promise<IngestDocumentResponse> {
+  const response = await fetch(`${API_BASE}/documents`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(params),
+  });
+
+  if (!response.ok) {
+    const errText = await response.text();
+    throw new Error(`Ingest failed: ${response.statusText} (${errText})`);
+  }
+  return response.json();
+}
+
+export async function deleteDocument(documentId: string): Promise<{ status: string; document_id: string }> {
+  const response = await fetch(`${API_BASE}/documents/${encodeURIComponent(documentId)}`, {
+    method: "DELETE",
+  });
+
+  if (!response.ok) {
+    const errText = await response.text();
+    throw new Error(`Delete failed: ${response.statusText} (${errText})`);
+  }
+  return response.json();
 }
 
 function simulateChatStream(params: {
@@ -435,3 +534,74 @@ function getSampleAccessGraph(userId: string): AccessRelation[] {
     },
   ];
 }
+
+export interface NoteSummary {
+  slug: string;
+  title: string;
+  tags: string[];
+  created_at: string;
+  source_query?: string | null;
+  preview: string;
+  path: string;
+}
+
+export interface NoteDetail {
+  slug: string;
+  title: string;
+  tags: string[];
+  created_at?: string;
+  source_query?: string | null;
+  content: string;
+  raw: string;
+}
+
+export interface AgentToolEvent {
+  id: string;
+  timestamp: string;
+  event_type: string;
+  principal_id: string;
+  action: string;
+  metadata: {
+    command?: string;
+    argv?: string[];
+    arguments?: Record<string, unknown>;
+    working_directory?: string;
+    exit_code?: number;
+    success?: boolean;
+    result_summary?: string;
+    reason?: string;
+    output_excerpt?: string;
+  };
+}
+
+export async function listNotes(tag?: string): Promise<NoteSummary[]> {
+  try {
+    const url = tag ? `${API_BASE}/notes?tag=${encodeURIComponent(tag)}` : `${API_BASE}/notes`;
+    const res = await fetch(url);
+    if (!res.ok) return [];
+    return (await res.json()) as NoteSummary[];
+  } catch {
+    return [];
+  }
+}
+
+export async function getNoteDetail(slug: string): Promise<NoteDetail | null> {
+  try {
+    const res = await fetch(`${API_BASE}/notes/${encodeURIComponent(slug)}`);
+    if (!res.ok) return null;
+    return (await res.json()) as NoteDetail;
+  } catch {
+    return null;
+  }
+}
+
+export async function listAgentTools(): Promise<AgentToolEvent[]> {
+  try {
+    const res = await fetch(`${API_BASE}/agent/tools`);
+    if (!res.ok) return [];
+    return (await res.json()) as AgentToolEvent[];
+  } catch {
+    return [];
+  }
+}
+
