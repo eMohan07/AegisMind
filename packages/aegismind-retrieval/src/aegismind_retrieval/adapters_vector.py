@@ -526,8 +526,7 @@ class QdrantVectorStoreAdapter(VectorStorePort):
             }
             if pre_filter:
                 conditions = [
-                    {"key": f"metadata.{k}", "match": {"value": v}}
-                    for k, v in pre_filter.items()
+                    {"key": f"metadata.{k}", "match": {"value": v}} for k, v in pre_filter.items()
                 ]
                 payload["filter"] = {"must": conditions}
             try:
@@ -566,6 +565,7 @@ class QdrantVectorStoreAdapter(VectorStorePort):
             return await self.query_dense(vector, pre_filter, top_k)
         if sparse_vector is not None:
             return await self.query_lexical("", sparse_vector, pre_filter, top_k)
+        return []
 
     async def delete(self, chunk_ids: list[str]) -> bool:
         """Delete points from Qdrant."""

@@ -143,3 +143,7 @@ def create_app(state: CoreState | None = None) -> FastAPI:
     setup_telemetry(app)
 
     return app
+
+
+# Default module-level application instance for uvicorn (e.g., uvicorn aegismind_core.app:app)
+app = create_app()

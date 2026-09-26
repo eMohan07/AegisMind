@@ -1177,3 +1177,11 @@ async def perform_readiness_check(state: CoreState) -> tuple[bool, dict[str, str
         checks["llm"] = f"error: {exc}"
 
     return all_ok, checks
+
+
+def __getattr__(name: str) -> Any:
+    if name == "app":
+        from aegismind_core.app import app as _app
+
+        return _app
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

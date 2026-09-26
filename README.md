@@ -6,10 +6,8 @@ Modular enterprise knowledge platform and offline sovereign AI agent with docume
 [![Architecture](https://img.shields.io/badge/architecture-hexagonal%20%2F%20ports%20%26%20adapters-orange.svg)](#architecture)
 [![Authz](https://img.shields.io/badge/authz-Zanzibar%20%2F%20SpiceDB-green.svg)](#permission-and-security-model)
 [![Linter](https://img.shields.io/badge/linter-ruff-purple.svg)](https://github.com/astral-sh/ruff)
-[![Tests](https://img.shields.io/badge/tests-194%20passing-brightgreen.svg)](#testing--quality)
+[![Tests](https://img.shields.io/badge/tests-194%20passing-brightgreen.svg)](#testing-and-quality)
 [![Frontend](https://img.shields.io/badge/UI-React%2019%20%2F%20Vite-cyan.svg)](apps/lens)
-
----
 
 ---
 
@@ -131,7 +129,7 @@ ollama pull qwen2.5:7b
 #### 2. Start the Agora Backend API
 From the project root:
 ```powershell
-uv run uvicorn aegismind_core.routes:app --reload --port 8000
+uv run uvicorn aegismind_core.app:app --reload --port 8000
 ```
 - Swagger API Docs: [http://localhost:8000/docs](http://localhost:8000/docs)
 - Agent Tools Listing: [http://localhost:8000/api/v1/agent/tools](http://localhost:8000/api/v1/agent/tools)
@@ -142,7 +140,7 @@ In a separate terminal:
 ```powershell
 pnpm --filter lens dev
 ```
-Open [http://localhost:5173/](http://localhost:5173/) in your browser.
+Open [http://localhost:3000/](http://localhost:3000/) in your browser (the default port configured in Vite).
 - **Chat**: Interact with the ReAct Sovereign Agent.
 - **Notes**: Browse, search, and preview Markdown notes created by the agent.
 - **Local Tools**: Inspect the live audit feed and allowed system commands.
@@ -181,7 +179,7 @@ AegisMind treats authorization correctness as non-negotiable:
 
 ---
 
-## Testing & Quality
+## Testing and Quality
 
 AegisMind maintains strict quality standards across all packages.
 
