@@ -1,4 +1,4 @@
-# AegisMind
+# AegisMind: Enterprise Knowledge Engine with Zanzibar ACL & n8n Automation
 
 Modular enterprise knowledge platform and offline sovereign AI agent with document-level Zanzibar access control enforced at retrieval.
 
@@ -11,7 +11,7 @@ Modular enterprise knowledge platform and offline sovereign AI agent with docume
 
 ---
 
-## Overview
+---
 
 AegisMind is an open-source, modular enterprise knowledge and retrieval platform engineered around clean hexagonal architecture (Ports and Adapters). It guarantees mathematical document-level authorization using Google Zanzibar-style Relation-Based Access Control (ReBAC) powered by SpiceDB.
 

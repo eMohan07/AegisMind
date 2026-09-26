@@ -1,0 +1,124 @@
+﻿{
+  "name": "AegisMind — DLQ Monitor & Auto-Retry",
+  "nodes": [
+    {
+      "parameters": { "rule": { "interval": [{ "field": "minutes", "minutesInterval": 30 }] } },
+      "id": "cron-dlq",
+      "name": "Every 30 Minutes",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [240, 300]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $env.AEGISMIND_BASE_URL }}/api/v1/dlq?status=pending&limit=100",
+        "sendHeaders": true,
+        "headerParameters": { "parameters": [{ "name": "X-API-Key", "value": "={{ $env.AEGISMIND_API_KEY }}" }] },
+        "options": {}
+      },
+      "id": "fetch-dlq",
+      "name": "GET /api/v1/dlq (pending)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [460, 300]
+    },
+    {
+      "parameters": {
+        "conditions": { "conditions": [{ "id": "c1", "leftValue": "={{ $json.total }}", "rightValue": 0, "operator": { "type": "number", "operation": "gt" } }] }
+      },
+      "id": "has-dlq-items",
+      "name": "Has Pending Items?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [680, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "const items = $input.item.json.items || [];\nconst retryable = items.filter(i => (i.retry_count || 0) < 3);\nconst abandoned = items.filter(i => (i.retry_count || 0) >= 3);\nreturn retryable.map(i => ({ json: { ...i, __retryable: true } })).concat(abandoned.map(i => ({ json: { ...i, __retryable: false } })));"
+      },
+      "id": "classify-dlq",
+      "name": "Classify DLQ Items",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [900, 180]
+    },
+    {
+      "parameters": {
+        "conditions": { "conditions": [{ "id": "c1", "leftValue": "={{ $json.__retryable }}", "rightValue": true, "operator": { "type": "boolean", "operation": "equal" } }] }
+      },
+      "id": "is-retryable",
+      "name": "Retryable?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [1120, 180]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.AEGISMIND_BASE_URL }}/api/v1/dlq/={{ $json.id }}/retry",
+        "sendHeaders": true,
+        "headerParameters": { "parameters": [{ "name": "X-API-Key", "value": "={{ $env.AEGISMIND_API_KEY }}" }] },
+        "options": { "timeout": 30000 }
+      },
+      "id": "retry-item",
+      "name": "POST /dlq/{id}/retry",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1340, 80]
+    },
+    {
+      "parameters": { "resource": "message", "channel": "={{ $env.SLACK_CHANNEL_ALERTS }}", "text": ":warning: *AegisMind DLQ Item ABANDONED* (3+ retries)\n>Connector: `={{ $json.connector_id }}` | Resource: `={{ $json.resource_id }}`\n>Error: ={{ $json.error_message }}", "otherOptions": {} },
+      "id": "alert-abandoned",
+      "name": "Slack: DLQ Abandoned Alert",
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2.2,
+      "position": [1340, 300],
+      "credentials": { "slackApi": { "id": "slack-creds", "name": "Slack API" } }
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $env.AEGISMIND_BASE_URL }}/api/v1/health",
+        "sendHeaders": true,
+        "headerParameters": { "parameters": [{ "name": "X-API-Key", "value": "={{ $env.AEGISMIND_API_KEY }}" }] },
+        "options": {}
+      },
+      "id": "health-check",
+      "name": "GET /api/v1/health",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [460, 540]
+    },
+    {
+      "parameters": {
+        "conditions": { "conditions": [{ "id": "c2", "leftValue": "={{ $json.status }}", "rightValue": "ok", "operator": { "type": "string", "operation": "notEqual" } }] }
+      },
+      "id": "is-unhealthy",
+      "name": "Unhealthy?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [680, 540]
+    },
+    {
+      "parameters": { "resource": "message", "channel": "={{ $env.SLACK_CHANNEL_ALERTS }}", "text": ":rotating_light: *AegisMind Health Check FAILED*\n>Status: `={{ $json.status }}`\n>Time: ={{ new Date().toISOString() }}", "otherOptions": {} },
+      "id": "alert-unhealthy",
+      "name": "Slack: Health Alert",
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2.2,
+      "position": [900, 540],
+      "credentials": { "slackApi": { "id": "slack-creds", "name": "Slack API" } }
+    }
+  ],
+  "connections": {
+    "Every 30 Minutes": { "main": [[{ "node": "GET /api/v1/dlq (pending)", "type": "main", "index": 0 }, { "node": "GET /api/v1/health", "type": "main", "index": 0 }]] },
+    "GET /api/v1/dlq (pending)": { "main": [[{ "node": "Has Pending Items?", "type": "main", "index": 0 }]] },
+    "Has Pending Items?": { "main": [[{ "node": "Classify DLQ Items", "type": "main", "index": 0 }], []] },
+    "Classify DLQ Items": { "main": [[{ "node": "Retryable?", "type": "main", "index": 0 }]] },
+    "Retryable?": { "main": [[{ "node": "POST /dlq/{id}/retry", "type": "main", "index": 0 }], [{ "node": "Slack: DLQ Abandoned Alert", "type": "main", "index": 0 }]] },
+    "GET /api/v1/health": { "main": [[{ "node": "Unhealthy?", "type": "main", "index": 0 }]] },
+    "Unhealthy?": { "main": [[{ "node": "Slack: Health Alert", "type": "main", "index": 0 }], []] }
+  },
+  "settings": { "executionOrder": "v1", "saveManualExecutions": true },
+  "tags": ["aegismind", "dlq", "monitoring"]
+}

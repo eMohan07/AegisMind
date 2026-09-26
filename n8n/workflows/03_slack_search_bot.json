@@ -1,0 +1,96 @@
+﻿{
+  "name": "AegisMind — Slack Bot Search Interface",
+  "nodes": [
+    {
+      "parameters": { "httpMethod": "POST", "path": "aegismind/slack/events", "responseMode": "responseNode", "options": {} },
+      "id": "slack-webhook",
+      "name": "Webhook: Slack Events",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [240, 300],
+      "webhookId": "aegismind-slack-events"
+    },
+    {
+      "parameters": {
+        "jsCode": "const body = $input.item.json.body || $input.item.json;\n// Slack URL verification challenge\nif (body.type === 'url_verification') {\n  return [{ json: { __respond: true, challenge: body.challenge } }];\n}\nconst event = body.event || {};\n// Only handle app_mention and direct message events\nif (!['app_mention', 'message'].includes(event.type)) return [];\nif (event.bot_id) return []; // ignore bot messages\nconst text = (event.text || '').replace(/<@[^>]+>/g, '').trim();\nif (!text) return [];\nreturn [{ json: { query: text, user_id: event.user, channel: event.channel, thread_ts: event.thread_ts || event.ts, tenant_id: body.team_id || 'corp-default' } }];"
+      },
+      "id": "parse-slack-event",
+      "name": "Parse Slack Event",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [460, 300]
+    },
+    {
+      "parameters": {
+        "conditions": { "conditions": [{ "id": "c1", "leftValue": "={{ $json.__respond }}", "rightValue": true, "operator": { "type": "boolean", "operation": "equal" } }] }
+      },
+      "id": "is-challenge",
+      "name": "URL Challenge?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [680, 300]
+    },
+    {
+      "parameters": { "respondWith": "json", "responseBody": "={ \"challenge\": \"={{ $json.challenge }}\" }" },
+      "id": "respond-challenge",
+      "name": "Respond Challenge",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [900, 180]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.AEGISMIND_BASE_URL }}/api/v1/search",
+        "sendHeaders": true,
+        "headerParameters": { "parameters": [{ "name": "Content-Type", "value": "application/json" }, { "name": "X-API-Key", "value": "={{ $env.AEGISMIND_API_KEY }}" }] },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ query: $json.query, user_id: $json.user_id, tenant_id: $json.tenant_id, top_k: 5, apply_mmr: true }) }}",
+        "options": { "timeout": 30000 }
+      },
+      "id": "search-aegismind",
+      "name": "POST /api/v1/search",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [900, 420]
+    },
+    {
+      "parameters": {
+        "jsCode": "const searchResp = $input.item.json;\nconst results = searchResp.results || [];\nif (!results.length) {\n  return [{ json: { text: ':mag: No results found for your query. Try rephrasing or check connector sync status.', channel: $('Parse Slack Event').item.json.channel, thread_ts: $('Parse Slack Event').item.json.thread_ts } }];\n}\nconst top = results.slice(0, 3);\nconst blocks = [\n  { type: 'section', text: { type: 'mrkdwn', text: ':brain: *AegisMind Results* for: _' + $('Parse Slack Event').item.json.query + '_' } },\n  { type: 'divider' }\n];\ntop.forEach((r, i) => {\n  const citation = r.citation || {};\n  const score = (r.score * 100).toFixed(1);\n  blocks.push({ type: 'section', text: { type: 'mrkdwn', text: '*' + (i+1) + '. ' + (citation.title || r.chunk_id || 'Document') + '* (' + score + '%)\n' + (r.text || '').slice(0, 300) + (r.text?.length > 300 ? '...' : '') } });\n  if (citation.url) blocks.push({ type: 'context', elements: [{ type: 'mrkdwn', text: ':link: <' + citation.url + '|View Source>' }] });\n});\nreturn [{ json: { blocks, channel: $('Parse Slack Event').item.json.channel, thread_ts: $('Parse Slack Event').item.json.thread_ts } }];"
+      },
+      "id": "format-results",
+      "name": "Format Slack Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1120, 420]
+    },
+    {
+      "parameters": { "resource": "message", "channel": "={{ $json.channel }}", "blocksUi": "={{ JSON.stringify($json.blocks) }}", "otherOptions": { "thread_ts": "={{ $json.thread_ts }}" } },
+      "id": "reply-slack",
+      "name": "Slack: Reply with Results",
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2.2,
+      "position": [1340, 420],
+      "credentials": { "slackApi": { "id": "slack-creds", "name": "Slack API" } }
+    },
+    {
+      "parameters": { "respondWith": "json", "responseBody": "={ \"status\": \"ok\" }" },
+      "id": "respond-200",
+      "name": "Respond 200",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [1560, 420]
+    }
+  ],
+  "connections": {
+    "Webhook: Slack Events": { "main": [[{ "node": "Parse Slack Event", "type": "main", "index": 0 }]] },
+    "Parse Slack Event": { "main": [[{ "node": "URL Challenge?", "type": "main", "index": 0 }]] },
+    "URL Challenge?": { "main": [[{ "node": "Respond Challenge", "type": "main", "index": 0 }], [{ "node": "POST /api/v1/search", "type": "main", "index": 0 }]] },
+    "POST /api/v1/search": { "main": [[{ "node": "Format Slack Response", "type": "main", "index": 0 }]] },
+    "Format Slack Response": { "main": [[{ "node": "Slack: Reply with Results", "type": "main", "index": 0 }]] },
+    "Slack: Reply with Results": { "main": [[{ "node": "Respond 200", "type": "main", "index": 0 }]] }
+  },
+  "settings": { "executionOrder": "v1", "saveManualExecutions": true },
+  "tags": ["aegismind", "slack", "search"]
+}

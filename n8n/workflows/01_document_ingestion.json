@@ -1,0 +1,86 @@
+﻿{
+  "name": "AegisMind — Document Ingestion Pipeline",
+  "nodes": [
+    {
+      "parameters": { "httpMethod": "POST", "path": "aegismind/ingest", "responseMode": "responseNode", "options": {} },
+      "id": "webhook-ingest",
+      "name": "Webhook: Ingest Trigger",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [240, 300],
+      "webhookId": "aegismind-ingest-webhook"
+    },
+    {
+      "parameters": {
+        "jsCode": "const body = $input.item.json.body || $input.item.json;\nconst source = body.source || 'api';\nlet title = body.title || body.filename || body.name || 'Untitled';\nlet content = body.content || body.text || body.body || '';\nlet documentId = body.document_id || body.id || null;\nlet tenantId = body.tenant_id || body.workspace || 'corp-default';\nlet allowedUsers = body.allowed_users || body.viewers || ['alice', 'bob'];\nlet metadata = body.metadata || {};\nif (body.commits && body.repository) {\n  title = '[GitHub] ' + body.repository.name + ' - ' + (body.commits[0]?.message || 'push');\n  content = body.commits.map(c => 'Commit ' + c.id.slice(0,7) + ': ' + c.message).join('\\n\\n');\n  metadata = { source: 'github', repo: body.repository.full_name, ref: body.ref };\n}\nif (!content.trim()) throw new Error('Empty content for ' + title);\nreturn [{ json: { title, content, document_id: documentId, tenant_id: tenantId, allowed_users: allowedUsers, metadata: { ...metadata, source, ingested_at: new Date().toISOString() } } }];"
+      },
+      "id": "normalize-payload",
+      "name": "Normalize Payload",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [460, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.AEGISMIND_BASE_URL }}/api/v1/documents",
+        "sendHeaders": true,
+        "headerParameters": { "parameters": [{ "name": "Content-Type", "value": "application/json" }, { "name": "X-API-Key", "value": "={{ $env.AEGISMIND_API_KEY }}" }] },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json) }}",
+        "options": { "timeout": 60000 }
+      },
+      "id": "ingest-document",
+      "name": "POST /api/v1/documents",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [680, 300]
+    },
+    {
+      "parameters": {
+        "conditions": { "conditions": [{ "id": "c1", "leftValue": "={{ $json.chunks_indexed }}", "rightValue": 0, "operator": { "type": "number", "operation": "gt" } } ] }
+      },
+      "id": "check-success",
+      "name": "Ingestion Successful?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [900, 300]
+    },
+    {
+      "parameters": { "resource": "message", "channel": "={{ $env.SLACK_CHANNEL_ALERTS }}", "text": ":white_check_mark: *AegisMind Ingested:* `={{ $('Normalize Payload').item.json.title }}`\n>Chunks: *={{ $json.chunks_indexed }}* | Tenant: `={{ $('Normalize Payload').item.json.tenant_id }}`", "otherOptions": {} },
+      "id": "notify-success",
+      "name": "Slack: Ingestion OK",
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2.2,
+      "position": [1120, 180],
+      "credentials": { "slackApi": { "id": "slack-creds", "name": "Slack API" } }
+    },
+    {
+      "parameters": { "resource": "message", "channel": "={{ $env.SLACK_CHANNEL_ALERTS }}", "text": ":x: *AegisMind Ingestion FAILED:* `={{ $('Normalize Payload').item.json.title }}`\n>={{ $json.errors?.join(', ') || $json.detail || 'Unknown error' }}", "otherOptions": {} },
+      "id": "notify-failure",
+      "name": "Slack: Ingestion Failed",
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2.2,
+      "position": [1120, 420],
+      "credentials": { "slackApi": { "id": "slack-creds", "name": "Slack API" } }
+    },
+    {
+      "parameters": { "respondWith": "json", "responseBody": "={ \"status\": \"ok\", \"document_id\": \"={{ $('POST /api/v1/documents').item.json.document_id }}\" }" },
+      "id": "respond-ok",
+      "name": "Respond 200 OK",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [1340, 180]
+    }
+  ],
+  "connections": {
+    "Webhook: Ingest Trigger": { "main": [[{ "node": "Normalize Payload", "type": "main", "index": 0 }]] },
+    "Normalize Payload": { "main": [[{ "node": "POST /api/v1/documents", "type": "main", "index": 0 }]] },
+    "POST /api/v1/documents": { "main": [[{ "node": "Ingestion Successful?", "type": "main", "index": 0 }]] },
+    "Ingestion Successful?": { "main": [[{ "node": "Slack: Ingestion OK", "type": "main", "index": 0 }], [{ "node": "Slack: Ingestion Failed", "type": "main", "index": 0 }]] },
+    "Slack: Ingestion OK": { "main": [[{ "node": "Respond 200 OK", "type": "main", "index": 0 }]] }
+  },
+  "settings": { "executionOrder": "v1", "saveManualExecutions": true },
+  "tags": ["aegismind", "ingestion"]
+}

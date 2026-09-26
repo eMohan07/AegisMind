@@ -13,16 +13,16 @@ class RerankerPort(ABC):
         self,
         query: str,
         candidates: list[ScoredChunk],
-        top_k: int,
+        top_n: int,
     ) -> list[ScoredChunk]:
-        """Score and reorder candidate chunks, truncating to top_k.
+        """Score and reorder candidate chunks, truncating to top_n.
 
         Args:
             query: The search query text.
             candidates: Allowed candidate chunks after authorization filtering.
-            top_k: Desired final output count.
+            top_n: Desired final output count.
 
         Returns:
-            List of ScoredChunk ordered by relevance descending, up to top_k elements.
+            List of ScoredChunk ordered by relevance descending, up to top_n elements.
         """
         ...

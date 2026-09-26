@@ -1,0 +1,95 @@
+﻿{
+  "name": "AegisMind — ACL Provisioning from HR System",
+  "nodes": [
+    {
+      "parameters": { "httpMethod": "POST", "path": "aegismind/acl/provision", "responseMode": "responseNode", "options": {} },
+      "id": "webhook-acl",
+      "name": "Webhook: HR Event",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [240, 300],
+      "webhookId": "aegismind-acl-provision"
+    },
+    {
+      "parameters": {
+        "jsCode": "const body = $input.item.json.body || $input.item.json;\nconst eventType = body.event_type || body.type;\nconst actions = [];\nif (eventType === 'employee.onboarded' || eventType === 'employee.role_changed') {\n  const userId = body.employee_id || body.user_id;\n  const dept = body.department;\n  const role = body.role;\n  const tenantId = body.tenant_id || 'corp-default';\n  const docSets = [];\n  if (dept === 'engineering') docSets.push({ resource_type: 'folder', resource_id: 'engineering-docs', relation: 'viewer' });\n  if (dept === 'finance') docSets.push({ resource_type: 'folder', resource_id: 'finance-docs', relation: 'viewer' });\n  if (role === 'manager') docSets.push({ resource_type: 'folder', resource_id: 'management-docs', relation: 'viewer' });\n  docSets.push({ resource_type: 'folder', resource_id: 'company-wide', relation: 'viewer' });\n  docSets.forEach(ds => actions.push({ action: 'grant', subject_type: 'user', subject_id: userId, ...ds, tenant_id: tenantId, user_id: userId, dept, role }));\n} else if (eventType === 'employee.offboarded') {\n  actions.push({ action: 'revoke', subject_type: 'user', subject_id: body.employee_id, resource_type: 'user', resource_id: body.employee_id, relation: 'owner', note: 'offboarding-all' });\n}\nreturn actions.map(a => ({ json: a }));"
+      },
+      "id": "map-hr-event",
+      "name": "Map HR Event to ACL Actions",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [460, 300]
+    },
+    {
+      "parameters": {
+        "conditions": { "conditions": [{ "id": "c1", "leftValue": "={{ $json.action }}", "rightValue": "grant", "operator": { "type": "string", "operation": "equal" } }] }
+      },
+      "id": "is-grant",
+      "name": "Grant or Revoke?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [680, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.AEGISMIND_BASE_URL }}/api/v1/relationships",
+        "sendHeaders": true,
+        "headerParameters": { "parameters": [{ "name": "Content-Type", "value": "application/json" }, { "name": "X-API-Key", "value": "={{ $env.AEGISMIND_API_KEY }}" }] },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ subject_type: $json.subject_type, subject_id: $json.subject_id, relation: $json.relation, resource_type: $json.resource_type, resource_id: $json.resource_id }) }}",
+        "options": {}
+      },
+      "id": "write-relationship",
+      "name": "POST /api/v1/relationships (grant)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [900, 180]
+    },
+    {
+      "parameters": {
+        "method": "DELETE",
+        "url": "={{ $env.AEGISMIND_BASE_URL }}/api/v1/relationships",
+        "sendHeaders": true,
+        "headerParameters": { "parameters": [{ "name": "Content-Type", "value": "application/json" }, { "name": "X-API-Key", "value": "={{ $env.AEGISMIND_API_KEY }}" }] },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ subject_type: $json.subject_type, subject_id: $json.subject_id, relation: $json.relation, resource_type: $json.resource_type, resource_id: $json.resource_id }) }}",
+        "options": {}
+      },
+      "id": "delete-relationship",
+      "name": "DELETE /api/v1/relationships (revoke)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [900, 420]
+    },
+    {
+      "parameters": { "resource": "message", "channel": "={{ $env.SLACK_CHANNEL_ALERTS }}", "text": ":key: *ACL Provisioned* for `={{ $('Map HR Event to ACL Actions').item.json.user_id }}`\n>Dept: ={{ $('Map HR Event to ACL Actions').item.json.dept }} | Role: ={{ $('Map HR Event to ACL Actions').item.json.role }}\n>Relations written: ={{ $input.all().length }}", "otherOptions": {} },
+      "id": "notify-acl",
+      "name": "Slack: ACL Provisioned",
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2.2,
+      "position": [1120, 300],
+      "credentials": { "slackApi": { "id": "slack-creds", "name": "Slack API" } }
+    },
+    {
+      "parameters": { "respondWith": "json", "responseBody": "={ \"status\": \"provisioned\" }" },
+      "id": "respond-acl-ok",
+      "name": "Respond OK",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [1340, 300]
+    }
+  ],
+  "connections": {
+    "Webhook: HR Event": { "main": [[{ "node": "Map HR Event to ACL Actions", "type": "main", "index": 0 }]] },
+    "Map HR Event to ACL Actions": { "main": [[{ "node": "Grant or Revoke?", "type": "main", "index": 0 }]] },
+    "Grant or Revoke?": { "main": [[{ "node": "POST /api/v1/relationships (grant)", "type": "main", "index": 0 }], [{ "node": "DELETE /api/v1/relationships (revoke)", "type": "main", "index": 0 }]] },
+    "POST /api/v1/relationships (grant)": { "main": [[{ "node": "Slack: ACL Provisioned", "type": "main", "index": 0 }]] },
+    "DELETE /api/v1/relationships (revoke)": { "main": [[{ "node": "Slack: ACL Provisioned", "type": "main", "index": 0 }]] },
+    "Slack: ACL Provisioned": { "main": [[{ "node": "Respond OK", "type": "main", "index": 0 }]] }
+  },
+  "settings": { "executionOrder": "v1", "saveManualExecutions": true },
+  "tags": ["aegismind", "acl", "provisioning"]
+}

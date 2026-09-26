@@ -1,0 +1,79 @@
+﻿{
+  "name": "AegisMind — Daily Audit Digest",
+  "nodes": [
+    {
+      "parameters": { "rule": { "interval": [{ "field": "cronExpression", "expression": "0 8 * * 1-5" }] } },
+      "id": "cron-daily",
+      "name": "Weekdays 8AM",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [240, 300]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $env.AEGISMIND_BASE_URL }}/api/v1/audit?limit=500&offset=0",
+        "sendHeaders": true,
+        "headerParameters": { "parameters": [{ "name": "X-API-Key", "value": "={{ $env.AEGISMIND_API_KEY }}" }] },
+        "options": {}
+      },
+      "id": "fetch-audit",
+      "name": "GET /api/v1/audit",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [460, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "const entries = $input.item.json.entries || [];\nconst yesterday = new Date(Date.now() - 86400000).toISOString();\nconst recent = entries.filter(e => e.timestamp > yesterday);\nconst byType = {};\nrecent.forEach(e => { byType[e.event_type] = (byType[e.event_type] || 0) + 1; });\nconst topUsers = {};\nrecent.forEach(e => { topUsers[e.principal_id] = (topUsers[e.principal_id] || 0) + 1; });\nconst topUsersList = Object.entries(topUsers).sort((a,b) => b[1]-a[1]).slice(0,5).map(([u,c]) => u + ': ' + c);\nconst searchCount = byType.search || 0;\nconst ingestCount = byType.ingest || 0;\nconst syncCount = byType.connector || 0;\nreturn [{ json: { total: recent.length, byType, topUsersList, searchCount, ingestCount, syncCount, date: new Date().toLocaleDateString() } }];"
+      },
+      "id": "compute-digest",
+      "name": "Compute Digest Stats",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [680, 300]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $env.AEGISMIND_BASE_URL }}/api/v1/readiness",
+        "sendHeaders": true,
+        "headerParameters": { "parameters": [{ "name": "X-API-Key", "value": "={{ $env.AEGISMIND_API_KEY }}" }] },
+        "options": {}
+      },
+      "id": "fetch-readiness",
+      "name": "GET /api/v1/readiness",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [680, 480]
+    },
+    {
+      "parameters": {
+        "jsCode": "const digest = $('Compute Digest Stats').item.json;\nconst readiness = $('GET /api/v1/readiness').item.json;\nconst checks = readiness.checks || {};\nconst healthLines = Object.entries(checks).map(([k,v]) => (v === 'ok' ? ':white_check_mark:' : ':x:') + ' ' + k + ': ' + v).join('\\n');\nconst topUsersText = digest.topUsersList.length ? digest.topUsersList.join(', ') : 'none';\nconst message = [\n  ':bar_chart: *AegisMind Daily Digest — ' + digest.date + '*',\n  '',\n  '*Activity (last 24h)*',\n  ':mag: Searches: *' + digest.searchCount + '*',\n  ':inbox_tray: Ingestions: *' + digest.ingestCount + '*',\n  ':arrows_counterclockwise: Connector Syncs: *' + digest.syncCount + '*',\n  ':busts_in_silhouette: Top Users: ' + topUsersText,\n  '',\n  '*System Health*',\n  healthLines\n].join('\\n');\nreturn [{ json: { text: message } }];"
+      },
+      "id": "format-digest",
+      "name": "Format Digest Message",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [900, 380]
+    },
+    {
+      "parameters": { "resource": "message", "channel": "={{ $env.SLACK_CHANNEL_DIGEST }}", "text": "={{ $json.text }}", "otherOptions": {} },
+      "id": "send-digest",
+      "name": "Slack: Send Daily Digest",
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2.2,
+      "position": [1120, 380],
+      "credentials": { "slackApi": { "id": "slack-creds", "name": "Slack API" } }
+    }
+  ],
+  "connections": {
+    "Weekdays 8AM": { "main": [[{ "node": "GET /api/v1/audit", "type": "main", "index": 0 }, { "node": "GET /api/v1/readiness", "type": "main", "index": 0 }]] },
+    "GET /api/v1/audit": { "main": [[{ "node": "Compute Digest Stats", "type": "main", "index": 0 }]] },
+    "Compute Digest Stats": { "main": [[{ "node": "Format Digest Message", "type": "main", "index": 0 }]] },
+    "GET /api/v1/readiness": { "main": [[{ "node": "Format Digest Message", "type": "main", "index": 0 }]] },
+    "Format Digest Message": { "main": [[{ "node": "Slack: Send Daily Digest", "type": "main", "index": 0 }]] }
+  },
+  "settings": { "executionOrder": "v1", "saveManualExecutions": true },
+  "tags": ["aegismind", "audit", "digest"]
+}

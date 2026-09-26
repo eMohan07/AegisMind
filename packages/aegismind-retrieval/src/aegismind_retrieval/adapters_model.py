@@ -243,7 +243,7 @@ class MockRerankerAdapter(RerankerPort):
         self,
         query: str,
         candidates: list[ScoredChunk],
-        top_n: int,
+        top_n: int = 5,
     ) -> list[ScoredChunk]:
         query_terms = set(query.lower().split())
         scored: list[ScoredChunk] = []
@@ -332,7 +332,7 @@ class TeiRerankerAdapter(RerankerPort):
         self,
         query: str,
         candidates: list[ScoredChunk],
-        top_n: int,
+        top_n: int = 5,
     ) -> list[ScoredChunk]:
         if not candidates:
             return []
