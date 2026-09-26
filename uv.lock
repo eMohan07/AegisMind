@@ -17,6 +17,7 @@ members = [
     "aegismind-connector-granola",
     "aegismind-connector-jira",
     "aegismind-connector-linear",
+    "aegismind-connector-local-filesystem",
     "aegismind-connector-notion",
     "aegismind-connector-salesforce",
     "aegismind-connector-sdk",
@@ -208,6 +209,23 @@ requires-dist = [
     { name = "aegismind-connector-sdk", editable = "packages/aegismind-connector-sdk" },
     { name = "aegismind-types", editable = "packages/aegismind-types" },
     { name = "httpx", specifier = ">=0.27" },
+    { name = "pydantic", specifier = ">=2.7" },
+]
+
+[[package]]
+name = "aegismind-connector-local-filesystem"
+version = "0.0.1"
+source = { editable = "connectors/local_filesystem" }
+dependencies = [
+    { name = "aegismind-connector-sdk" },
+    { name = "aegismind-types" },
+    { name = "pydantic" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "aegismind-connector-sdk", editable = "packages/aegismind-connector-sdk" },
+    { name = "aegismind-types", editable = "packages/aegismind-types" },
     { name = "pydantic", specifier = ">=2.7" },
 ]
 
