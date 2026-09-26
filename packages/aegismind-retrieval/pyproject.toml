@@ -20,10 +20,14 @@ dependencies = [
 memory = "aegismind_retrieval.adapters_vector:MemoryVectorStoreAdapter"
 pgvectorscale = "aegismind_retrieval.adapters_vector:PgVectorScaleAdapter"
 qdrant = "aegismind_retrieval.adapters_vector:QdrantVectorStoreAdapter"
+sqlite = "aegismind_retrieval.adapters_sqlite_vector:SqliteVectorStoreAdapter"
 
 [project.entry-points."aegismind.embedder"]
 tei = "aegismind_retrieval.adapters_model:TeiEmbedderAdapter"
 mock = "aegismind_retrieval.adapters_model:MockEmbedderAdapter"
+ollama = "aegismind_retrieval.adapters_local_embed:OllamaEmbedderAdapter"
+deterministic = "aegismind_retrieval.adapters_local_embed:LocalDeterministicEmbedderAdapter"
+fastembed = "aegismind_retrieval.adapters_local_embed:FastEmbedAdapter"
 
 [project.entry-points."aegismind.reranker"]
 tei = "aegismind_retrieval.adapters_model:TeiRerankerAdapter"
