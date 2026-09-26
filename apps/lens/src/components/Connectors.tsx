@@ -101,10 +101,13 @@ export function Connectors() {
     setTimeout(() => setActionNotice(null), 3000);
   };
 
-  const filtered = connectors.filter((c) => {
+  const filtered = (connectors || []).filter((c) => {
+    if (!c) return false;
+    const title = c.title || c.name || "";
+    const description = c.description || "";
     const matchesSearch =
-      c.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      c.description.toLowerCase().includes(searchQuery.toLowerCase());
+      title.toLowerCase().includes((searchQuery || "").toLowerCase()) ||
+      description.toLowerCase().includes((searchQuery || "").toLowerCase());
     const matchesStatus =
       statusFilter === "all" || c.status === statusFilter;
     return matchesSearch && matchesStatus;
@@ -174,7 +177,7 @@ export function Connectors() {
               <CardHeader className="p-4 pb-2">
                 <div className="flex items-start justify-between">
                   <CardTitle className="text-base font-semibold text-foreground flex items-center gap-2">
-                    {connector.title}
+                    {connector.title || connector.name || "Connector"}
                   </CardTitle>
                   <Badge
                     variant={
@@ -186,11 +189,11 @@ export function Connectors() {
                     }
                     className="capitalize text-[10px]"
                   >
-                    {connector.status}
+                    {connector.status || "disconnected"}
                   </Badge>
                 </div>
                 <CardDescription className="text-xs text-muted-foreground mt-1 line-clamp-2">
-                  {connector.description}
+                  {connector.description || "Enterprise repository integration"}
                 </CardDescription>
               </CardHeader>
 
