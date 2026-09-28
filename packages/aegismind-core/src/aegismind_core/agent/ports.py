@@ -60,3 +60,12 @@ class SandboxedCommandRunnerPort(Protocol):
     async def run_command(self, cmd: str) -> str:
         """Execute sandboxed command against strict allowlist, recording audit trail."""
         ...
+
+
+@runtime_checkable
+class SaveMemoryPort(Protocol):
+    """Port for saving facts to long-term memory with approval."""
+
+    async def save_memory(self, fact: str, tags: list[str]) -> str:
+        """Save a fact to the memory store after approval."""
+        ...

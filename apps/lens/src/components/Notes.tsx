@@ -12,6 +12,7 @@ import {
 import {
   listNotes,
   getNoteDetail,
+  deleteNote,
   parseFile,
   studyDocument,
   createVaultNote,
@@ -41,13 +42,16 @@ import {
   FileQuestion,
   Lightbulb,
   Brain,
+  Maximize,
   Maximize2,
   Minimize2,
+  Columns,
   Crop,
   PanelLeftClose,
   PanelLeft,
   Trash2,
 } from "lucide-react";
+import { format12HrDateTime } from "@/lib/utils";
 
 interface NotesProps {
   currentUserId?: string;
@@ -238,6 +242,30 @@ export function Notes({
         n.tags.some((t) => t.toLowerCase().includes(q))
     );
   }, [notes, searchQuery]);
+
+  // Delete a note from the markdown vault
+  const handleDeleteNote = async (slugToDelete: string, e?: React.MouseEvent) => {
+    if (e) {
+      e.stopPropagation();
+    }
+    const confirmed = window.confirm(`Are you sure you want to delete this note: ${slugToDelete}?`);
+    if (!confirmed) return;
+
+    try {
+      await deleteNote(slugToDelete);
+      setNotes((prev) => prev.filter((n) => n.slug !== slugToDelete));
+      if (selectedSlug === slugToDelete) {
+        const remaining = notes.filter((n) => n.slug !== slugToDelete);
+        setSelectedSlug(remaining.length > 0 ? remaining[0]!.slug : null);
+        if (remaining.length === 0) {
+          setSelectedNote(null);
+        }
+      }
+    } catch (err) {
+      console.error("Failed to delete note:", err);
+    }
+  };
+
 
   // Handle Study File Upload (PDF, PPT, DOCX, etc.)
   const handleStudyFileUpload = async (file: File) => {
@@ -441,7 +469,7 @@ export function Notes({
   return (
     <div className="flex-1 p-6 max-w-7xl mx-auto w-full space-y-6">
       {/* Top Header & Section Switcher */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-border/70 pb-4">
+      <div className="rounded-2xl border border-slate-200/90 dark:border-white/10 bg-white/95 dark:bg-[#141826]/90 backdrop-blur-2xl p-5 shadow-xl flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
           <div className="flex items-center gap-2">
             <h1 className="text-2xl font-bold tracking-tight text-foreground flex items-center gap-2">
@@ -493,7 +521,7 @@ export function Notes({
       {activeSection === "study" && (
         <div className="space-y-4">
           {/* Quick Toolbar & Sizing Controls Bar */}
-          <div className="flex items-center justify-between gap-2 bg-card/40 border border-border/60 px-3 py-1.5 rounded-lg text-xs">
+          <div className="flex items-center justify-between gap-2 rounded-xl border border-slate-200/90 dark:border-white/10 bg-white/95 dark:bg-[#141826]/90 backdrop-blur-2xl px-4 py-2.5 text-xs shadow-md">
             <div className="flex items-center gap-2">
               <span className="font-semibold text-foreground flex items-center gap-1 text-[11px]">
                 <Layers className="h-3.5 w-3.5 text-primary" />
@@ -506,30 +534,24 @@ export function Notes({
               </span>
             </div>
 
-            {/* Sizing & Crop Controls */}
+            {/* Sizing & View Controls */}
             <div className="flex items-center gap-1.5">
-              {/* Crop / Toggle Document Sidebar */}
+              {/* Toggle Document Sidebar */}
               <Button
                 variant={isSidebarCropped ? "default" : "outline"}
                 size="sm"
                 onClick={() => setIsSidebarCropped(!isSidebarCropped)}
-                title={isSidebarCropped ? "Un-crop Sidebar (Show documents)" : "Crop Sidebar (Enlarge chatbox)"}
-                className="h-7 px-2.5 text-[11px] gap-1 font-medium"
+                title={isSidebarCropped ? "Show documents sidebar" : "Hide documents sidebar (Enlarge chatbox)"}
+                className="h-7 w-7 p-0"
               >
                 {isSidebarCropped ? (
-                  <>
-                    <PanelLeft className="h-3 w-3" />
-                    <span>Show Files</span>
-                  </>
+                  <PanelLeft className="h-3.5 w-3.5" />
                 ) : (
-                  <>
-                    <Crop className="h-3 w-3" />
-                    <span>Crop Sidebar</span>
-                  </>
+                  <PanelLeftClose className="h-3.5 w-3.5" />
                 )}
               </Button>
 
-              {/* Chatbox Size Toggle (Standard vs Large vs Full) */}
+              {/* Chatbox Size Toggle (Icons only: Compact, Standard, Enlarged, Full Width) */}
               <div className="hidden sm:flex items-center gap-1 border-l border-border/60 pl-1.5">
                 <button
                   type="button"
@@ -537,13 +559,14 @@ export function Notes({
                     setIsSidebarCropped(false);
                     setChatSizePreset("compact");
                   }}
-                  className={`px-2 py-0.5 rounded text-[10px] font-medium transition-colors ${
+                  title="Compact View"
+                  className={`h-7 w-7 flex items-center justify-center rounded transition-colors ${
                     !isSidebarCropped && chatSizePreset === "compact"
                       ? "bg-primary text-primary-foreground"
                       : "text-muted-foreground hover:bg-muted"
                   }`}
                 >
-                  Compact
+                  <Minimize2 className="h-3.5 w-3.5" />
                 </button>
                 <button
                   type="button"
@@ -551,13 +574,14 @@ export function Notes({
                     setIsSidebarCropped(false);
                     setChatSizePreset("standard");
                   }}
-                  className={`px-2 py-0.5 rounded text-[10px] font-medium transition-colors ${
+                  title="Standard View"
+                  className={`h-7 w-7 flex items-center justify-center rounded transition-colors ${
                     !isSidebarCropped && chatSizePreset === "standard"
                       ? "bg-primary text-primary-foreground"
                       : "text-muted-foreground hover:bg-muted"
                   }`}
                 >
-                  Standard
+                  <Columns className="h-3.5 w-3.5" />
                 </button>
                 <button
                   type="button"
@@ -565,13 +589,14 @@ export function Notes({
                     setIsSidebarCropped(false);
                     setChatSizePreset("large");
                   }}
-                  className={`px-2 py-0.5 rounded text-[10px] font-medium transition-colors ${
+                  title="Enlarged View"
+                  className={`h-7 w-7 flex items-center justify-center rounded transition-colors ${
                     !isSidebarCropped && chatSizePreset === "large"
                       ? "bg-primary text-primary-foreground"
                       : "text-muted-foreground hover:bg-muted"
                   }`}
                 >
-                  Enlarged
+                  <Maximize2 className="h-3.5 w-3.5" />
                 </button>
                 <button
                   type="button"
@@ -579,13 +604,14 @@ export function Notes({
                     setIsSidebarCropped(true);
                     setChatSizePreset("full");
                   }}
-                  className={`px-2 py-0.5 rounded text-[10px] font-medium transition-colors ${
+                  title="Full Width View"
+                  className={`h-7 w-7 flex items-center justify-center rounded transition-colors ${
                     isSidebarCropped || chatSizePreset === "full"
                       ? "bg-primary text-primary-foreground"
                       : "text-muted-foreground hover:bg-muted"
                   }`}
                 >
-                  Full Width
+                  <Maximize className="h-3.5 w-3.5" />
                 </button>
               </div>
 
@@ -662,7 +688,7 @@ export function Notes({
               </div>
 
               {/* Loaded Study Documents List */}
-              <Card className="border-border/80 bg-card/40 flex-1 flex flex-col">
+              <Card className="rounded-2xl border border-slate-200/90 dark:border-white/10 bg-white/95 dark:bg-[#141826]/90 backdrop-blur-2xl flex-1 flex flex-col shadow-xl">
                 <CardHeader className="py-2.5 px-3.5 border-b border-border/50">
                   <div className="flex items-center justify-between">
                     <CardTitle className="text-xs font-bold text-foreground flex items-center gap-1.5">
@@ -738,7 +764,7 @@ export function Notes({
 
               {/* Document Overview & Quick Study Actions */}
               {activeDoc && (
-                <Card className="border-border/80 bg-card/60 p-3.5 space-y-3">
+                <Card className="rounded-2xl border border-slate-200/90 dark:border-white/10 bg-white/95 dark:bg-[#141826]/90 backdrop-blur-2xl p-4 space-y-3 shadow-xl">
                   <div className="flex items-center justify-between">
                     <span className="text-xs font-bold text-foreground truncate">
                       Study Actions: {activeDoc.title}
@@ -829,7 +855,7 @@ export function Notes({
 
             {/* Right Column: Dedicated Individual Chatbox for the Selected Document */}
             <div className={`${rightColSpanClass} flex flex-col transition-all duration-200`}>
-              <Card className={`flex-1 flex flex-col border-border/80 bg-card/50 overflow-hidden shadow-sm ${chatHeightClass}`}>
+              <Card className={`flex-1 flex flex-col rounded-2xl border border-slate-200/90 dark:border-white/10 bg-white/95 dark:bg-[#141826]/90 backdrop-blur-2xl overflow-hidden shadow-xl ${chatHeightClass}`}>
                 {/* Chat Session Header */}
                 <CardHeader className="py-2.5 px-4 border-b border-border/60 bg-muted/20 flex flex-row items-center justify-between">
                   <div className="flex items-center gap-2 truncate">
@@ -1127,6 +1153,14 @@ export function Notes({
                           <h3 className="font-semibold text-xs text-foreground line-clamp-1">
                             {note.title}
                           </h3>
+                          <button
+                            type="button"
+                            onClick={(e) => handleDeleteNote(note.slug, e)}
+                            className="h-5 w-5 p-0.5 rounded text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition-colors shrink-0"
+                            title="Delete note from vault"
+                          >
+                            <Trash2 className="h-3.5 w-3.5" />
+                          </button>
                         </div>
                         <p className="text-[11px] text-muted-foreground line-clamp-2 mt-1">
                           {note.preview}
@@ -1166,9 +1200,20 @@ export function Notes({
                         <CardTitle className="text-lg font-bold text-foreground">
                           {selectedNote.title}
                         </CardTitle>
-                        <Badge variant="outline" className="text-[10px] border-border text-muted-foreground">
-                          {selectedNote.slug}
-                        </Badge>
+                        <div className="flex items-center gap-2">
+                          <Badge variant="outline" className="text-[10px] border-border text-muted-foreground">
+                            {selectedNote.slug}
+                          </Badge>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => handleDeleteNote(selectedNote.slug)}
+                            className="h-7 w-7 p-0 text-muted-foreground hover:text-destructive hover:bg-destructive/10"
+                            title="Delete note from vault"
+                          >
+                            <Trash2 className="h-3.5 w-3.5" />
+                          </Button>
+                        </div>
                       </div>
                       {selectedNote.created_at && (
                         <CardDescription className="text-xs flex items-center gap-3 mt-1">

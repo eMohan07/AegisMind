@@ -17,6 +17,7 @@ from aegismind_core.agent.ports import (
     LocalKnowledgeSearchPort,
     NoteCreatorPort,
     SandboxedCommandRunnerPort,
+    SaveMemoryPort,
     SystemFileReaderPort,
     ToolActionResult,
 )
@@ -24,6 +25,7 @@ from aegismind_core.agent.tools import (
     LocalKnowledgeSearchAdapter,
     NoteCreatorAdapter,
     SandboxedCommandRunnerAdapter,
+    SaveMemoryAdapter,
     SystemFileReaderAdapter,
 )
 
@@ -35,6 +37,8 @@ __all__ = [
     "NoteCreatorAdapter",
     "NoteCreatorPort",
     "OLLAMA_TOOLS_SCHEMA",
+    "SaveMemoryAdapter",
+    "SaveMemoryPort",
     "SandboxedCommandRunnerAdapter",
     "SandboxedCommandRunnerPort",
     "SovereignAgentLoop",

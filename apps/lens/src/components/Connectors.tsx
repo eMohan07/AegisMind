@@ -302,8 +302,8 @@ export function Connectors() {
   });
 
   return (
-    <div className="flex flex-col h-[calc(100vh-8rem)] p-4 max-w-7xl mx-auto w-full gap-4">
-      <div className="flex flex-col gap-4 rounded-xl border border-border/80 bg-card/60 p-4">
+    <div className="flex flex-col w-full gap-5 pb-6">
+      <div className="flex flex-col gap-4 rounded-2xl border border-slate-200/90 dark:border-white/10 bg-white/95 dark:bg-[#141826]/90 backdrop-blur-2xl p-5 shadow-xl">
         <div className="flex items-center justify-between border-b border-border/50 pb-4">
           <div>
             <h2 className="text-xl font-bold text-foreground flex items-center gap-2">
@@ -388,7 +388,7 @@ export function Connectors() {
           return (
             <Card
               key={connector.name}
-              className="flex flex-col justify-between border-border/70 bg-card/40 hover:bg-card/70 hover:border-primary/30 transition-all"
+              className="flex flex-col justify-between rounded-xl border border-slate-200/90 dark:border-white/10 bg-white/95 dark:bg-[#141826]/90 backdrop-blur-2xl shadow-md hover:shadow-xl transition-all"
             >
               <CardHeader className="p-4 pb-2">
                 <div className="flex items-start justify-between">
@@ -525,7 +525,7 @@ export function Connectors() {
       </div>
 
       {airGapped && (
-        <Card className="border-border/80 bg-card/60">
+        <Card className="rounded-2xl border border-slate-200/90 dark:border-white/10 bg-white/95 dark:bg-[#141826]/90 backdrop-blur-2xl shadow-xl">
           <CardHeader className="p-4 pb-2">
             <CardTitle className="text-sm flex items-center gap-2">
               <Database className="h-4 w-4 text-primary" />

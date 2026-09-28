@@ -146,6 +146,27 @@ class LocalToolActivityRecorder:
             logger.warning("Failed to load local tool activity from %s: %s", self.storage_path, exc)
             self._events = []
 
+        self.mark_running_as_interrupted()
+
+    def mark_running_as_interrupted(self) -> int:
+        """Mark any leftover 'running' events as 'failed' with 'interrupted' message."""
+        count = 0
+        for event in self._events:
+            if event.status == "running":
+                self._events.remove(event)
+                interrupted = event.model_copy(
+                    update={
+                        "status": "failed",
+                        "error": "interrupted",
+                        "result_summary": "interrupted",
+                    }
+                )
+                self._events.append(interrupted)
+                count += 1
+        if count > 0:
+            self._persist()
+        return count
+
     def _persist(self) -> None:
         """Flush events to local JSON storage."""
         try:

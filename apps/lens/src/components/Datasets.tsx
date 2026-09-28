@@ -43,6 +43,7 @@ import {
   Plus,
   Sparkles,
 } from "lucide-react";
+import { format12HrDateTime } from "@/lib/utils";
 
 interface DatasetsProps {
   currentTenantId: string;
@@ -483,7 +484,7 @@ export function Datasets({
   return (
     <div className="p-4 max-w-7xl mx-auto w-full space-y-5">
       {/* Top Banner: Ollama LLM Engine & Quick 1-Click File Ingest */}
-      <Card className="border-border/80 bg-card/60 backdrop-blur-sm shadow-sm">
+      <Card className="rounded-2xl border border-slate-200/90 dark:border-white/10 bg-white/95 dark:bg-[#141826]/90 backdrop-blur-2xl shadow-xl">
         <CardContent className="p-4 flex flex-col md:flex-row md:items-center justify-between gap-4">
           <div className="flex items-center gap-3">
             <div className="h-10 w-10 rounded-lg bg-primary/10 border border-primary/30 flex items-center justify-center text-primary shrink-0">
@@ -616,7 +617,7 @@ export function Datasets({
 
       {/* Collapsible Manual Ingest Form */}
       {showManualForm && (
-        <Card className="border-border/80 bg-card/70 backdrop-blur-sm animate-in fade-in-50 duration-200">
+        <Card className="rounded-2xl border border-slate-200/90 dark:border-white/10 bg-white/95 dark:bg-[#141826]/90 backdrop-blur-2xl shadow-xl animate-in fade-in-50 duration-200">
           <CardHeader className="pb-3">
             <CardTitle className="text-sm flex items-center gap-2">
               <Database className="h-4 w-4 text-primary" />
@@ -764,7 +765,7 @@ export function Datasets({
         {/* Left Column: Datasets List (Can be cropped/hidden to enlarge chatbox) */}
         {!isSidebarCropped && (
           <div className="lg:col-span-5 space-y-3">
-            <Card className="border-border/80 bg-card/60 backdrop-blur-sm">
+            <Card className="rounded-2xl border border-slate-200/90 dark:border-white/10 bg-white/95 dark:bg-[#141826]/90 backdrop-blur-2xl shadow-xl">
               <CardHeader className="p-3.5 pb-2 flex flex-row items-center justify-between">
                 <div>
                   <CardTitle className="text-sm flex items-center gap-2">
@@ -779,11 +780,10 @@ export function Datasets({
                   variant="ghost"
                   size="sm"
                   onClick={() => setIsSidebarCropped(true)}
-                  className="h-7 px-2 text-xs text-muted-foreground hover:text-foreground"
-                  title="Crop dataset list to enlarge chatbox"
+                  className="h-7 w-7 p-0 text-muted-foreground hover:text-foreground"
+                  title="Enlarge chatbox (Collapse dataset list)"
                 >
-                  <PanelLeftClose className="h-3.5 w-3.5 mr-1" />
-                  <span className="text-[11px]">Crop</span>
+                  <PanelLeftClose className="h-4 w-4" />
                 </Button>
               </CardHeader>
               <CardContent className="p-3.5 pt-0 space-y-2.5">
@@ -917,7 +917,7 @@ export function Datasets({
         {/* Right Column: Dedicated Individual Dataset Chatbox */}
         <div className={isSidebarCropped ? "lg:col-span-12" : "lg:col-span-7"}>
           {activeDataset ? (
-            <Card className="border-border/80 bg-card/60 backdrop-blur-sm shadow-sm flex flex-col">
+            <Card className="rounded-2xl border border-slate-200/90 dark:border-white/10 bg-white/95 dark:bg-[#141826]/90 backdrop-blur-2xl shadow-xl flex flex-col">
               {/* Chatbox Header with Dataset Metadata & Crop/Resize Controls */}
               <CardHeader className="p-3.5 pb-2.5 border-b border-border/60">
                 <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5">
@@ -958,24 +958,18 @@ export function Datasets({
                       </Badge>
                     )}
 
-                    {/* Un-crop / Crop toggle */}
+                    {/* Size toggle (Enlarge / Restore chatbox) */}
                     <Button
                       variant="outline"
                       size="sm"
                       onClick={() => setIsSidebarCropped((prev) => !prev)}
-                      className="h-7 px-2 text-xs gap-1"
-                      title={isSidebarCropped ? "Un-crop Sidebar (Show dataset list)" : "Crop Sidebar (Enlarge chatbox to full width)"}
+                      className="h-7 w-7 p-0"
+                      title={isSidebarCropped ? "Show dataset list (Restore chatbox)" : "Enlarge chatbox (Collapse dataset list)"}
                     >
                       {isSidebarCropped ? (
-                        <>
-                          <PanelLeftOpen className="h-3 w-3" />
-                          <span className="hidden sm:inline">Un-crop</span>
-                        </>
+                        <PanelLeftOpen className="h-3.5 w-3.5" />
                       ) : (
-                        <>
-                          <PanelLeftClose className="h-3 w-3" />
-                          <span className="hidden sm:inline">Crop</span>
-                        </>
+                        <PanelLeftClose className="h-3.5 w-3.5" />
                       )}
                     </Button>
 
@@ -1074,7 +1068,7 @@ export function Datasets({
                         <span className="font-medium text-foreground">
                           {msg.role === "user" ? "You" : "Dataset Assistant"}
                         </span>
-                        <span>{msg.timestamp}</span>
+                        <span>{format12HrDateTime(msg.timestamp)}</span>
                         {msg.memorySaved && (
                           <span className="text-emerald-400 font-mono text-[9px] flex items-center gap-0.5">
                             <Sparkles className="h-2.5 w-2.5" />

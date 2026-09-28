@@ -199,21 +199,17 @@ class SovereignAgentLoop:
             else:
                 res_text = f"UNKNOWN_TOOL: Tool '{name}' is not recognized."
                 success = False
-        except Exception as exc:
-            logger.error("Error executing tool %s: %s", name, exc)
-            res_text = f"TOOL_EXECUTION_ERROR: {exc}"
-            success = False
+        finally:
+            if self.activity_recorder and active_event:
+                self.activity_recorder.record_complete(
+                    event_id=active_event.event_id,
+                    status="success" if success else "failed",
+                    duration_ms=(time.perf_counter() - start_time) * 1000.0,
+                    result_summary=res_text[:300],
+                    error=res_text if not success else None,
+                )
 
         duration_ms = (time.perf_counter() - start_time) * 1000.0
-
-        if self.activity_recorder and active_event:
-            self.activity_recorder.record_complete(
-                event_id=active_event.event_id,
-                status="success" if success else "failed",
-                duration_ms=duration_ms,
-                result_summary=res_text[:300],
-                error=res_text if not success else None,
-            )
 
         action_result = ToolActionResult(
             tool_name=name,

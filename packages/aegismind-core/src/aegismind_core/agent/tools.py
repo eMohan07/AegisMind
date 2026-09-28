@@ -17,8 +17,11 @@ from aegismind_core.agent.ports import (
     LocalKnowledgeSearchPort,
     NoteCreatorPort,
     SandboxedCommandRunnerPort,
+    SaveMemoryPort,
     SystemFileReaderPort,
 )
+from aegismind_core.memory.models import MemoryRecord, MemoryStatus, MemoryType
+from aegismind_core.memory.sqlite_store import SQLiteMemoryStore
 
 logger = logging.getLogger(__name__)
 
@@ -334,3 +337,35 @@ class SandboxedCommandRunnerAdapter(SandboxedCommandRunnerPort):
             )
 
         return output
+
+
+class SaveMemoryAdapter(SaveMemoryPort):
+    """Adapter that persists agent-extracted facts into the long-term memory store.
+
+    Facts are stored as PENDING MemoryRecords and must be approved by the user
+    before they become active.  The approval gate (already in APPROVAL_TOOLS)
+    ensures this adapter is gated behind explicit human consent.
+    """
+
+    def __init__(self, store: SQLiteMemoryStore) -> None:
+        self.store = store
+
+    async def save_memory(self, fact: str, tags: list[str]) -> str:
+        try:
+            record = MemoryRecord(
+                namespace="global",
+                type=MemoryType.SEMANTIC,
+                content=fact,
+                importance=0.7,
+                entities_json=tags,
+                status=MemoryStatus.PENDING,
+                source_thread_id="agent",
+            )
+            saved = await self.store.add(record)
+            return f"MEMORY_SAVED: id={saved.id} status=pending tags={tags}"
+        except ValueError as exc:
+            logger.warning("save_memory: rejected by guard: %s", exc)
+            return f"MEMORY_REJECTED: {exc}"
+        except Exception as exc:
+            logger.error("save_memory: store error: %s", exc)
+            return f"MEMORY_SAVE_FAILED: {exc}"

@@ -907,6 +907,18 @@ export async function getNoteDetail(slug: string): Promise<NoteDetail | null> {
   }
 }
 
+export async function deleteNote(slug: string): Promise<boolean> {
+  try {
+    const res = await fetch(`${API_BASE}/notes/${encodeURIComponent(slug)}`, {
+      method: "DELETE",
+    });
+    return res.ok;
+  } catch {
+    return false;
+  }
+}
+
+
 export async function getLocalToolActivity(
   category?: string,
   status?: string,
@@ -1132,7 +1144,7 @@ export async function proposeAction(params: { tool_name: string; arguments: Reco
   return data as { id: string; status: string };
 }
 
-// --- Long-Term Conversation Memory API ---
+// --- Long-Term Conversation Memory API (legacy, kept for backward compatibility) ---
 
 export interface MemoryEntry {
   id: string;
@@ -1194,5 +1206,100 @@ export async function memoryClear(userId: string, tenantId: string): Promise<{ s
   } catch {
     throw new Error("Failed to clear memory");
   }
+}
+
+// --- Typed Long-Term Memory API (Phase 4+) ---
+
+export type MemoryType = "semantic" | "episodic" | "procedural" | "preference";
+export type MemoryStatusType = "active" | "pending" | "rejected" | "forgotten" | "superseded";
+
+export interface MemoryRecord {
+  id: string;
+  namespace: string;
+  type: MemoryType;
+  content: string;
+  entities: string[];
+  confidence: number;
+  importance: number;
+  status: MemoryStatusType;
+  pinned: boolean;
+  sensitivity: string;
+  source_thread_id: string | null;
+  created_at: string;
+  updated_at: string;
+  last_accessed_at: string | null;
+  access_count: number;
+  valid_from: string | null;
+  valid_to: string | null;
+  superseded_by: string | null;
+  content_hash: string;
+}
+
+export interface MemoryAuditEvent {
+  seq: number;
+  ts: string;
+  event: string;
+  memory_id: string;
+  actor: string;
+  payload: Record<string, unknown>;
+  prev_hash: string;
+  hash: string;
+}
+
+export async function listMemoryRecords(
+  namespace: string = "global",
+  status?: MemoryStatusType,
+  type?: MemoryType,
+  limit: number = 50,
+): Promise<MemoryRecord[]> {
+  const url = new URL(`${API_BASE}/memory/records`, window.location.origin);
+  url.searchParams.set("namespace", namespace);
+  if (status) url.searchParams.set("status", status);
+  if (type) url.searchParams.set("type", type);
+  url.searchParams.set("limit", String(limit));
+  const res = await fetch(url);
+  if (!res.ok) return [];
+  return res.json() as Promise<MemoryRecord[]>;
+}
+
+export async function getMemoryRecord(memoryId: string): Promise<MemoryRecord | null> {
+  const res = await fetch(`${API_BASE}/memory/records/${encodeURIComponent(memoryId)}`);
+  if (!res.ok) return null;
+  return res.json() as Promise<MemoryRecord>;
+}
+
+export async function updateMemoryRecord(
+  memoryId: string,
+  updates: Partial<Pick<MemoryRecord, "content" | "importance" | "type" | "entities" | "status">>,
+): Promise<MemoryRecord> {
+  const res = await fetch(`${API_BASE}/memory/records/${encodeURIComponent(memoryId)}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(updates),
+  });
+  if (!res.ok) throw new Error(`Update failed: ${res.statusText}`);
+  return res.json() as Promise<MemoryRecord>;
+}
+
+export async function approveMemory(memoryId: string): Promise<MemoryRecord> {
+  return updateMemoryRecord(memoryId, { status: "active" as MemoryStatusType });
+}
+
+export async function rejectMemory(memoryId: string): Promise<MemoryRecord> {
+  return updateMemoryRecord(memoryId, { status: "rejected" as MemoryStatusType });
+}
+
+export async function forgetMemory(memoryId: string): Promise<{ status: string }> {
+  const res = await fetch(`${API_BASE}/memory/records/${encodeURIComponent(memoryId)}`, {
+    method: "DELETE",
+  });
+  if (!res.ok) throw new Error(`Forget failed: ${res.statusText}`);
+  return res.json() as Promise<{ status: string }>;
+}
+
+export async function getMemoryAudit(memoryId: string): Promise<MemoryAuditEvent[]> {
+  const res = await fetch(`${API_BASE}/memory/records/${encodeURIComponent(memoryId)}/audit`);
+  if (!res.ok) return [];
+  return res.json() as Promise<MemoryAuditEvent[]>;
 }
 

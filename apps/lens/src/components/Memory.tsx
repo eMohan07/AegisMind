@@ -13,591 +13,755 @@ import {
   Search,
   Trash2,
   Clock,
-  MessageSquare,
   Loader2,
-  Home,
-  Database,
+  Check,
+  X,
+  Shield,
+  ChevronDown,
+  ChevronRight,
+  Sparkles,
   BookOpen,
-  CornerDownRight,
+  Settings2,
+  Heart,
+  RefreshCw,
+  MessageSquare,
   Send,
   Bot,
   User,
-  ChevronDown,
-  ChevronRight,
-  X,
+  ExternalLink,
+  Layers,
+  CheckCircle2,
 } from "lucide-react";
 import {
+  listMemoryRecords,
+  approveMemory,
+  rejectMemory,
+  forgetMemory,
+  getMemoryAudit,
+  streamChat,
+  type MemoryRecord,
+  type MemoryStatusType,
+  type MemoryType,
+  type MemoryAuditEvent,
+} from "@/lib/api";
+import {
   getAllConversations,
-  getFlatMessages,
-  clearAllConversations,
   clearThread,
+  clearAllConversations,
+  recordExchange,
   subscribeToStore,
   type ConvThread,
-  type FlatMessage,
+  type ConvMessage,
 } from "@/lib/conversationStore";
-import { streamChat, memorySearch, type MemoryEntry } from "@/lib/api";
 
 interface MemoryProps {
   currentUserId: string;
   currentTenantId: string;
+  onNavigateToChat?: (query: string) => void;
 }
 
-type SourceFilter = "all" | "home" | "dataset" | "notes";
+type MainViewTab = "conversations" | "records";
+type StatusTab = "all" | "active" | "pending";
+type TypeFilter = "all" | MemoryType;
 
-interface MemoryChatMessage {
-  id: string;
-  role: "user" | "assistant";
-  content: string;
-  timestamp: string;
+const TYPE_COLORS: Record<string, string> = {
+  semantic: "bg-blue-500/10 text-blue-600 dark:text-blue-400 border-blue-500/20",
+  episodic: "bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/20",
+  procedural: "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/20",
+  preference: "bg-violet-500/10 text-violet-600 dark:text-violet-400 border-violet-500/20",
+};
+
+const TYPE_ICONS: Record<string, React.ElementType> = {
+  semantic: Brain,
+  episodic: Clock,
+  procedural: Settings2,
+  preference: Heart,
+};
+
+const STATUS_COLORS: Record<string, string> = {
+  active: "bg-green-500/10 text-green-600 dark:text-green-400 border-green-500/20",
+  pending: "bg-yellow-500/10 text-yellow-600 dark:text-yellow-400 border-yellow-500/20",
+  rejected: "bg-red-500/10 text-red-600 dark:text-red-400 border-red-500/20",
+  forgotten: "bg-gray-500/10 text-gray-500 dark:text-gray-400 border-gray-500/20",
+  superseded: "bg-orange-500/10 text-orange-600 dark:text-orange-400 border-orange-500/20",
+};
+
+function timeAgo(dateStr: string): string {
+  const now = new Date();
+  const then = new Date(dateStr);
+  const diffMs = now.getTime() - then.getTime();
+  if (isNaN(diffMs)) return "recently";
+  const diffMins = Math.floor(diffMs / 60000);
+  if (diffMins < 1) return "just now";
+  if (diffMins < 60) return `${diffMins}m ago`;
+  const diffHours = Math.floor(diffMins / 60);
+  if (diffHours < 24) return `${diffHours}h ago`;
+  const diffDays = Math.floor(diffHours / 24);
+  if (diffDays < 30) return `${diffDays}d ago`;
+  return then.toLocaleDateString();
 }
 
-const SOURCE_LABELS: Record<string, string> = {
-  home: "Main Chat",
-  dataset: "Dataset",
-  notes: "Notes/Study",
-};
+/* ---- MemoryCard for Knowledge Facts ---- */
+function MemoryCard({
+  memory,
+  onApprove,
+  onReject,
+  onForget,
+}: {
+  memory: MemoryRecord;
+  onApprove: (id: string) => void;
+  onReject: (id: string) => void;
+  onForget: (id: string) => void;
+}) {
+  const [expanded, setExpanded] = React.useState(false);
+  const [auditLog, setAuditLog] = React.useState<MemoryAuditEvent[]>([]);
+  const [loadingAudit, setLoadingAudit] = React.useState(false);
 
-const SOURCE_COLORS: Record<string, string> = {
-  home: "bg-blue-500/10 text-blue-600 dark:text-blue-400 border-blue-500/20",
-  dataset: "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/20",
-  notes: "bg-violet-500/10 text-violet-600 dark:text-violet-400 border-violet-500/20",
-};
+  const TypeIcon = TYPE_ICONS[memory.type] ?? Brain;
 
-const SOURCE_ICONS: Record<string, React.ElementType> = {
-  home: Home,
-  dataset: Database,
-  notes: BookOpen,
-};
+  const handleToggleAudit = async () => {
+    if (expanded) {
+      setExpanded(false);
+      return;
+    }
+    setLoadingAudit(true);
+    try {
+      const events = await getMemoryAudit(memory.id);
+      setAuditLog(events);
+    } catch {
+      setAuditLog([]);
+    }
+    setLoadingAudit(false);
+    setExpanded(true);
+  };
 
-export function Memory({ currentUserId, currentTenantId }: MemoryProps) {
-  // All conversations from the cross-chatbox store
-  const [threads, setThreads] = React.useState<ConvThread[]>([]);
-  const [flatMessages, setFlatMessages] = React.useState<FlatMessage[]>([]);
+  return (
+    <Card className="group transition-all hover:shadow-xl rounded-2xl border border-slate-200/90 dark:border-white/10 bg-white/95 dark:bg-[#141826]/90 backdrop-blur-2xl shadow-md">
+      <CardContent className="p-4 space-y-3">
+        {/* Header row */}
+        <div className="flex items-start justify-between gap-2">
+          <div className="flex items-center gap-2 min-w-0">
+            <TypeIcon className="h-4 w-4 shrink-0 text-muted-foreground" />
+            <Badge variant="outline" className={`text-xs ${TYPE_COLORS[memory.type] ?? ""}`}>
+              {memory.type}
+            </Badge>
+            <Badge variant="outline" className={`text-xs ${STATUS_COLORS[memory.status] ?? ""}`}>
+              {memory.status}
+            </Badge>
+            <span className="text-xs text-muted-foreground">{timeAgo(memory.created_at)}</span>
+          </div>
+          {memory.pinned && (
+            <Badge variant="secondary" className="text-xs shrink-0">
+              Pinned
+            </Badge>
+          )}
+        </div>
 
-  // UI filters
-  const [sourceFilter, setSourceFilter] = React.useState<SourceFilter>("all");
+        {/* Content */}
+        <p className="text-sm font-medium text-foreground leading-relaxed">{memory.content}</p>
+
+        {/* Entities */}
+        {memory.entities && memory.entities.length > 0 && (
+          <div className="flex flex-wrap gap-1">
+            {memory.entities.map((e, i) => (
+              <Badge key={i} variant="secondary" className="text-xs font-normal">
+                {e}
+              </Badge>
+            ))}
+          </div>
+        )}
+
+        {/* Importance + confidence bar */}
+        <div className="flex items-center gap-3 text-xs text-muted-foreground">
+          <span>Importance: {(memory.importance * 100).toFixed(0)}%</span>
+          <span>Confidence: {(memory.confidence * 100).toFixed(0)}%</span>
+          {memory.access_count > 0 && <span>Accessed: {memory.access_count}x</span>}
+        </div>
+
+        {/* Action buttons */}
+        <div className="flex items-center gap-2 pt-1">
+          {memory.status === "pending" && (
+            <>
+              <Button
+                size="sm"
+                variant="outline"
+                className="h-7 text-xs gap-1 text-green-600 hover:bg-green-500/10"
+                onClick={() => onApprove(memory.id)}
+              >
+                <Check className="h-3 w-3" /> Approve
+              </Button>
+              <Button
+                size="sm"
+                variant="outline"
+                className="h-7 text-xs gap-1 text-red-600 hover:bg-red-500/10"
+                onClick={() => onReject(memory.id)}
+              >
+                <X className="h-3 w-3" /> Reject
+              </Button>
+            </>
+          )}
+          {memory.status === "active" && (
+            <Button
+              size="sm"
+              variant="outline"
+              className="h-7 text-xs gap-1 text-red-600 hover:bg-red-500/10"
+              onClick={() => onForget(memory.id)}
+            >
+              <Trash2 className="h-3 w-3" /> Forget
+            </Button>
+          )}
+          <Button
+            size="sm"
+            variant="ghost"
+            className="h-7 text-xs gap-1 ml-auto"
+            onClick={handleToggleAudit}
+          >
+            {expanded ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
+            Audit
+          </Button>
+        </div>
+
+        {/* Audit trail */}
+        {expanded && (
+          <div className="border-t pt-2 mt-1 space-y-1">
+            {loadingAudit ? (
+              <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                <Loader2 className="h-3 w-3 animate-spin" /> Loading audit trail...
+              </div>
+            ) : auditLog.length === 0 ? (
+              <p className="text-xs text-muted-foreground">No audit events found.</p>
+            ) : (
+              auditLog.map((ev) => (
+                <div key={ev.seq} className="flex items-center gap-2 text-xs text-muted-foreground">
+                  <span className="font-mono text-[10px] opacity-60">#{ev.seq}</span>
+                  <Badge variant="outline" className="text-[10px] py-0">
+                    {ev.event}
+                  </Badge>
+                  <span>{timeAgo(ev.ts)}</span>
+                  <span className="ml-auto font-mono text-[10px] opacity-40 truncate max-w-[120px]">
+                    {ev.hash.slice(0, 12)}...
+                  </span>
+                </div>
+              ))
+            )}
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+/* ---- Individual Conversation Card sub-component ---- */
+function ConversationCard({
+  thread,
+  onDelete,
+}: {
+  thread: ConvThread;
+  onDelete: (id: string) => void;
+}) {
+  const [isExpanded, setIsExpanded] = React.useState(false);
+
+  const sourceBadge = () => {
+    switch (thread.source) {
+      case "home":
+        return <Badge variant="outline" className="text-[10px] border-cyan-500/40 text-cyan-400">Main Chat</Badge>;
+      case "dataset":
+        return <Badge variant="outline" className="text-[10px] border-emerald-500/40 text-emerald-400">Dataset Chat</Badge>;
+      case "notes":
+        return <Badge variant="outline" className="text-[10px] border-purple-500/40 text-purple-400">Study Hub</Badge>;
+      default:
+        return <Badge variant="outline" className="text-[10px] border-blue-500/40 text-blue-400">Direct Chat</Badge>;
+    }
+  };
+
+  return (
+    <Card className="rounded-2xl border border-slate-200/90 dark:border-white/10 bg-white/95 dark:bg-[#141826]/90 backdrop-blur-2xl shadow-md transition-all hover:shadow-lg">
+      <CardContent className="p-4 space-y-3">
+        {/* Header row */}
+        <div className="flex items-start justify-between gap-3">
+          <div className="space-y-1 min-w-0 flex-1">
+            <div className="flex items-center gap-2 flex-wrap">
+              {sourceBadge()}
+              <span className="text-[11px] text-muted-foreground flex items-center gap-1 font-mono">
+                <Clock className="h-3 w-3" />
+                {timeAgo(thread.updatedAt)}
+              </span>
+              <Badge variant="secondary" className="text-[10px] px-1.5 py-0 font-mono">
+                {thread.messages.length} {thread.messages.length === 1 ? "msg" : "msgs"}
+              </Badge>
+            </div>
+            <h3 className="font-bold text-sm text-foreground truncate cursor-pointer" onClick={() => setIsExpanded(!isExpanded)}>
+              {thread.label || "Untitled Conversation"}
+            </h3>
+          </div>
+
+          <div className="flex items-center gap-1 shrink-0">
+            <Button
+              size="sm"
+              variant="ghost"
+              className="h-7 px-2 text-xs text-muted-foreground hover:text-foreground gap-1"
+              onClick={() => setIsExpanded(!isExpanded)}
+            >
+              {isExpanded ? <ChevronDown className="h-3.5 w-3.5" /> : <ChevronRight className="h-3.5 w-3.5" />}
+              <span>{isExpanded ? "Collapse" : "View"}</span>
+            </Button>
+            <Button
+              size="sm"
+              variant="ghost"
+              className="h-7 w-7 p-0 text-muted-foreground hover:text-destructive hover:bg-destructive/10"
+              onClick={() => onDelete(thread.threadId)}
+              title="Delete conversation from memory"
+            >
+              <Trash2 className="h-3.5 w-3.5" />
+            </Button>
+          </div>
+        </div>
+
+        {/* Message preview snippet if collapsed */}
+        {!isExpanded && thread.messages.length > 0 && (
+          <p className="text-xs text-muted-foreground line-clamp-2 leading-relaxed">
+            {thread.messages[thread.messages.length - 1]?.content || ""}
+          </p>
+        )}
+
+        {/* Expanded Transcript */}
+        {isExpanded && (
+          <div className="border-t border-border/40 pt-3 mt-2 space-y-3 max-h-[400px] overflow-y-auto pr-1">
+            {thread.messages.map((msg, idx) => (
+              <div
+                key={msg.id || idx}
+                className={`p-3 rounded-xl text-xs leading-relaxed ${
+                  msg.role === "user"
+                    ? "bg-primary/10 border border-primary/20 text-foreground ml-4"
+                    : "bg-muted/40 border border-border/50 text-foreground/90 mr-4"
+                }`}
+              >
+                <div className="flex items-center justify-between font-semibold mb-1 text-[11px] text-muted-foreground">
+                  <span className="flex items-center gap-1.5">
+                    {msg.role === "user" ? <User className="h-3 w-3 text-primary" /> : <Bot className="h-3 w-3 text-cyan-400" />}
+                    {msg.role === "user" ? "User" : "Sovereign AI"}
+                  </span>
+                  <span className="font-mono text-[10px] opacity-70">
+                    {msg.timestamp ? new Date(msg.timestamp).toLocaleTimeString() : ""}
+                  </span>
+                </div>
+                <div className="whitespace-pre-wrap">{msg.content}</div>
+              </div>
+            ))}
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+/* ---- Main Memory Component ---- */
+export function Memory({ currentUserId, currentTenantId, onNavigateToChat }: MemoryProps) {
+  const [mainTab, setMainTab] = React.useState<MainViewTab>("conversations");
+  const [conversations, setConversations] = React.useState<ConvThread[]>([]);
+  const [records, setRecords] = React.useState<MemoryRecord[]>([]);
+  const [loading, setLoading] = React.useState(false);
+  const [statusTab, setStatusTab] = React.useState<StatusTab>("all");
+  const [typeFilter, setTypeFilter] = React.useState<TypeFilter>("all");
   const [searchQuery, setSearchQuery] = React.useState("");
 
-  // Expanded thread state
-  const [expandedThreads, setExpandedThreads] = React.useState<Set<string>>(new Set());
+  // Direct AI Interaction in Memory Section State
+  const [directPrompt, setDirectPrompt] = React.useState("");
+  const [isAiStreaming, setIsAiStreaming] = React.useState(false);
+  const [directStreamText, setDirectStreamText] = React.useState("");
+  const [directThinking, setDirectThinking] = React.useState<string | null>(null);
 
-  // Long-term memory search (backend)
-  const [memoryResults, setMemoryResults] = React.useState<MemoryEntry[]>([]);
-  const [isSearching, setIsSearching] = React.useState(false);
-
-  // Dedicated Memory Chatbox
-  const [chatMessages, setChatMessages] = React.useState<MemoryChatMessage[]>([
-    {
-      id: "mem-welcome",
-      role: "assistant",
-      content:
-        "Hello! I have access to all your past conversations across every chatbox. Ask me anything based on previous discussions.",
-      timestamp: new Date().toISOString(),
-    },
-  ]);
-  const [chatInput, setChatInput] = React.useState("");
-  const [isChatStreaming, setIsChatStreaming] = React.useState(false);
-  const abortRef = React.useRef<(() => void) | null>(null);
-  const chatEndRef = React.useRef<HTMLDivElement>(null);
-
-  // Load from store and subscribe to updates
-  const refresh = React.useCallback(() => {
-    setThreads(getAllConversations());
-    setFlatMessages(getFlatMessages(500));
+  // Load conversations from cross-chatbox store
+  const loadConversations = React.useCallback(() => {
+    const list = getAllConversations();
+    setConversations(list);
   }, []);
 
   React.useEffect(() => {
-    refresh();
-    return subscribeToStore(refresh);
-  }, [refresh]);
+    loadConversations();
+    const unsubscribe = subscribeToStore(loadConversations);
+    return () => unsubscribe();
+  }, [loadConversations]);
 
-  // Auto-scroll memory chat
-  React.useEffect(() => {
-    chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [chatMessages, isChatStreaming]);
-
-  const handleSearch = async () => {
-    if (!searchQuery.trim()) {
-      setMemoryResults([]);
-      return;
-    }
-    setIsSearching(true);
+  // Load memory records from API
+  const fetchRecords = React.useCallback(async () => {
+    setLoading(true);
     try {
-      const results = await memorySearch(searchQuery, currentUserId, currentTenantId, 10);
-      setMemoryResults(results);
+      const statusParam: MemoryStatusType | undefined =
+        statusTab === "all" ? undefined : (statusTab as MemoryStatusType);
+      const typeParam: MemoryType | undefined =
+        typeFilter === "all" ? undefined : (typeFilter as MemoryType);
+      const data = await listMemoryRecords("global", statusParam, typeParam, 200);
+      setRecords(data);
     } catch {
-      // ignore
-    } finally {
-      setIsSearching(false);
+      setRecords([]);
     }
-  };
+    setLoading(false);
+  }, [statusTab, typeFilter]);
 
-  const handleClearAll = () => {
-    if (!confirm("Clear all cross-chatbox conversation history from memory?")) return;
-    clearAllConversations();
-  };
+  React.useEffect(() => {
+    if (mainTab === "records") {
+      fetchRecords();
+    }
+  }, [mainTab, fetchRecords]);
 
-  const handleClearThread = (threadId: string, e: React.MouseEvent) => {
-    e.stopPropagation();
-    clearThread(threadId);
-  };
+  // Direct AI chat submission right inside the Memory section
+  const handleDirectAiSend = async () => {
+    const q = directPrompt.trim();
+    if (!q || isAiStreaming) return;
 
-  const toggleThread = (threadId: string) => {
-    setExpandedThreads((prev) => {
-      const next = new Set(prev);
-      if (next.has(threadId)) {
-        next.delete(threadId);
-      } else {
-        next.add(threadId);
-      }
-      return next;
-    });
-  };
-
-  // Send a message in the dedicated memory chatbox
-  const handleMemoryChatSend = async () => {
-    if (!chatInput.trim() || isChatStreaming) return;
+    setDirectPrompt("");
+    setIsAiStreaming(true);
+    setDirectStreamText("");
+    setDirectThinking("Accessing sovereign retrieval memory...");
 
     const userMsgId = `mem-user-${Date.now()}`;
-    const assistantMsgId = `mem-asst-${Date.now()}`;
-    const query = chatInput.trim();
+    const asstMsgId = `mem-asst-${Date.now()}`;
+    const threadId = `mem-${Date.now()}`;
+    const threadLabel = q.length > 50 ? q.slice(0, 50) + "..." : q;
 
-    // Build a context summary from stored conversations
-    const contextSnippets = flatMessages
-      .filter((m) => m.role === "user")
-      .slice(0, 20)
-      .map((m) => `[${m.threadLabel}] Q: ${m.content.slice(0, 200)}`)
-      .join("\n");
+    let accumulated = "";
 
-    const fullQuery = contextSnippets
-      ? `[CONTEXT FROM PAST CONVERSATIONS]\n${contextSnippets}\n\n[USER QUESTION]\n${query}`
-      : query;
-
-    setChatMessages((prev) => [
-      ...prev,
-      {
-        id: userMsgId,
-        role: "user",
-        content: query,
-        timestamp: new Date().toISOString(),
-      },
-      {
-        id: assistantMsgId,
-        role: "assistant",
-        content: "",
-        timestamp: new Date().toISOString(),
-      },
-    ]);
-    setChatInput("");
-    setIsChatStreaming(true);
-
-    const cancel = streamChat({
-      query: fullQuery,
-      tenant_id: currentTenantId,
-      user_id: currentUserId,
-      onThinking: () => {},
-      onToken: (token) => {
-        setChatMessages((prev) =>
-          prev.map((m) =>
-            m.id === assistantMsgId ? { ...m, content: m.content + token } : m
-          )
-        );
-      },
-      onCitations: () => {},
-      onDone: () => {
-        setIsChatStreaming(false);
-        abortRef.current = null;
-      },
-      onError: (err) => {
-        setIsChatStreaming(false);
-        abortRef.current = null;
-        setChatMessages((prev) =>
-          prev.map((m) =>
-            m.id === assistantMsgId
-              ? {
-                  ...m,
-                  content:
-                    m.content ||
-                    `Error: ${err.message}. Please ensure Ollama is running.`,
-                }
-              : m
-          )
-        );
-      },
-    });
-
-    abortRef.current = cancel;
+    try {
+      streamChat({
+        query: q,
+        user_id: currentUserId,
+        tenant_id: currentTenantId,
+        onThinking: (status) => setDirectThinking(status),
+        onToken: (token) => {
+          accumulated += token;
+          setDirectStreamText((prev) => prev + token);
+        },
+        onCitations: () => {},
+        onDone: () => {
+          setIsAiStreaming(false);
+          setDirectThinking(null);
+          // Persist directly as an individual conversation
+          if (accumulated.trim()) {
+            recordExchange({
+              threadId,
+              label: threadLabel,
+              source: "home",
+              userMessage: {
+                id: userMsgId,
+                content: q,
+                timestamp: new Date().toISOString(),
+              },
+              assistantMessage: {
+                id: asstMsgId,
+                content: accumulated,
+                timestamp: new Date().toISOString(),
+              },
+            });
+            loadConversations();
+          }
+        },
+        onError: (err) => {
+          setIsAiStreaming(false);
+          setDirectThinking(null);
+          setDirectStreamText(`Error: ${err.message}`);
+        },
+      });
+    } catch (err: any) {
+      setIsAiStreaming(false);
+      setDirectThinking(null);
+      setDirectStreamText(`Failed to dispatch query: ${err?.message || err}`);
+    }
   };
 
-  // Filtered threads
-  const filteredThreads = React.useMemo(() => {
-    return threads.filter((t) => {
-      if (sourceFilter !== "all" && t.source !== sourceFilter) return false;
-      if (searchQuery.trim()) {
-        const q = searchQuery.toLowerCase();
-        const matchesLabel = t.label.toLowerCase().includes(q);
-        const matchesMessages = t.messages.some((m) =>
-          m.content.toLowerCase().includes(q)
-        );
-        return matchesLabel || matchesMessages;
-      }
-      return true;
-    });
-  }, [threads, sourceFilter, searchQuery]);
+  // Filter conversations by search query
+  const filteredConversations = React.useMemo(() => {
+    if (!searchQuery.trim()) return conversations;
+    const q = searchQuery.toLowerCase();
+    return conversations.filter(
+      (c) =>
+        c.label.toLowerCase().includes(q) ||
+        c.messages.some((m) => m.content.toLowerCase().includes(q))
+    );
+  }, [conversations, searchQuery]);
 
-  // Stats
-  const totalMessages = flatMessages.length;
-  const homeCount = threads.filter((t) => t.source === "home").reduce((s, t) => s + t.messages.length, 0);
-  const datasetCount = threads.filter((t) => t.source === "dataset").reduce((s, t) => s + t.messages.length, 0);
-  const notesCount = threads.filter((t) => t.source === "notes").reduce((s, t) => s + t.messages.length, 0);
+  // Filter records by search query
+  const filteredRecords = React.useMemo(() => {
+    if (!searchQuery.trim()) return records;
+    const q = searchQuery.toLowerCase();
+    return records.filter(
+      (r) =>
+        r.content.toLowerCase().includes(q) ||
+        r.entities.some((e) => e.toLowerCase().includes(q))
+    );
+  }, [records, searchQuery]);
+
+  const handleDeleteConversation = (threadId: string) => {
+    clearThread(threadId);
+    loadConversations();
+  };
+
+  const handleClearAllConversations = () => {
+    const ok = window.confirm("Are you sure you want to clear all stored conversations from memory?");
+    if (ok) {
+      clearAllConversations();
+      loadConversations();
+    }
+  };
+
+  const handleApprove = async (id: string) => {
+    try {
+      await approveMemory(id);
+      await fetchRecords();
+    } catch {}
+  };
+
+  const handleReject = async (id: string) => {
+    try {
+      await rejectMemory(id);
+      await fetchRecords();
+    } catch {}
+  };
+
+  const handleForget = async (id: string) => {
+    try {
+      await forgetMemory(id);
+      await fetchRecords();
+    } catch {}
+  };
 
   return (
-    <div className="p-4 max-w-7xl mx-auto w-full space-y-5">
-      {/* Header */}
-      <Card className="border-border/80 bg-card/60 backdrop-blur-sm">
-        <CardContent className="p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+    <div className="flex flex-col w-full gap-5 pb-8 animate-in fade-in-50 duration-200">
+      {/* ─── Header Card ─── */}
+      <div className="rounded-2xl border border-slate-200/90 dark:border-white/10 bg-white/95 dark:bg-[#141826]/90 backdrop-blur-2xl p-5 shadow-xl space-y-4">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
           <div className="flex items-center gap-3">
-            <div className="h-10 w-10 rounded-lg bg-primary/10 border border-primary/30 flex items-center justify-center text-primary">
-              <Brain className="h-5 w-5" />
+            <div className="p-2.5 rounded-xl bg-primary/15 text-primary border border-primary/25 shrink-0">
+              <Brain className="h-6 w-6" />
             </div>
             <div>
-              <h3 className="text-sm font-semibold text-foreground">
-                Cross-Chatbox Conversation Memory
-              </h3>
-              <p className="text-xs text-muted-foreground">
-                {totalMessages} messages across {threads.length} threads (Home: {homeCount}, Datasets: {datasetCount}, Notes: {notesCount})
+              <div className="flex items-center gap-2">
+                <h1 className="text-xl font-bold tracking-tight text-foreground">Sovereign Memory Vault</h1>
+                <Badge variant="outline" className="border-primary/40 text-primary text-xs font-mono">
+                  Individual Conversations
+                </Badge>
+              </div>
+              <p className="text-xs text-muted-foreground mt-0.5">
+                Interactions with AI are saved as individual conversations, preserving recall and context across sessions.
               </p>
             </div>
           </div>
-          <div className="flex items-center gap-2">
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={handleClearAll}
-              disabled={threads.length === 0}
-              className="h-8 text-xs gap-1"
-            >
-              <Trash2 className="h-3 w-3" />
-              Clear All
-            </Button>
-          </div>
-        </CardContent>
-      </Card>
 
-      {/* Source Filter Chips */}
-      <div className="flex items-center gap-2 flex-wrap">
-        {(["all", "home", "dataset", "notes"] as SourceFilter[]).map((src) => {
-          const count =
-            src === "all"
-              ? threads.length
-              : threads.filter((t) => t.source === src).length;
-          return (
+          {/* Primary View Toggle: Conversations vs Knowledge Facts */}
+          <div className="flex items-center gap-1.5 bg-muted/40 p-1 rounded-xl border border-border/50">
             <button
-              key={src}
               type="button"
-              onClick={() => setSourceFilter(src)}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium border transition-all ${
-                sourceFilter === src
-                  ? "bg-primary text-primary-foreground border-primary shadow-sm"
-                  : "bg-card border-border/70 text-muted-foreground hover:text-foreground hover:bg-secondary"
+              onClick={() => setMainTab("conversations")}
+              className={`text-xs px-3 py-1.5 rounded-lg font-medium transition-all ${
+                mainTab === "conversations"
+                  ? "bg-primary text-primary-foreground shadow-xs font-semibold"
+                  : "text-muted-foreground hover:text-foreground"
               }`}
             >
-              {src !== "all" && (() => {
-                const Icon: React.ElementType = SOURCE_ICONS[src] ?? MessageSquare;
-                return <Icon className="h-3.5 w-3.5" />;
-              })()}
-              <span className="capitalize">{src === "all" ? "All Sources" : SOURCE_LABELS[src]}</span>
-              <span
-                className={`px-1.5 py-0.5 rounded text-[10px] font-mono ${
-                  sourceFilter === src
-                    ? "bg-primary-foreground/20 text-primary-foreground"
-                    : "bg-muted text-muted-foreground"
-                }`}
-              >
-                {count}
-              </span>
+              <MessageSquare className="h-3.5 w-3.5 inline mr-1.5" />
+              Conversations ({conversations.length})
             </button>
-          );
-        })}
+            <button
+              type="button"
+              onClick={() => setMainTab("records")}
+              className={`text-xs px-3 py-1.5 rounded-lg font-medium transition-all ${
+                mainTab === "records"
+                  ? "bg-primary text-primary-foreground shadow-xs font-semibold"
+                  : "text-muted-foreground hover:text-foreground"
+              }`}
+            >
+              <Sparkles className="h-3.5 w-3.5 inline mr-1.5" />
+              Facts & Policies ({records.length})
+            </button>
+          </div>
+        </div>
+
+        {/* Search & Actions Bar */}
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pt-2 border-t border-border/50">
+          <div className="relative flex-1 max-w-md">
+            <Search className="absolute left-3 top-2.5 h-3.5 w-3.5 text-muted-foreground" />
+            <Input
+              placeholder={mainTab === "conversations" ? "Search conversations..." : "Search memory records..."}
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              className="pl-9 h-8.5 text-xs bg-muted/20"
+            />
+          </div>
+
+          {mainTab === "conversations" ? (
+            <div className="flex items-center gap-2">
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={loadConversations}
+                className="h-8 text-xs gap-1.5 text-muted-foreground hover:text-foreground"
+              >
+                <RefreshCw className="h-3.5 w-3.5" /> Refresh
+              </Button>
+              {conversations.length > 0 && (
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  onClick={handleClearAllConversations}
+                  className="h-8 text-xs text-muted-foreground hover:text-destructive gap-1"
+                >
+                  <Trash2 className="h-3.5 w-3.5" /> Clear All
+                </Button>
+              )}
+            </div>
+          ) : (
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={fetchRecords}
+              disabled={loading}
+              className="h-8 text-xs gap-1.5"
+            >
+              <RefreshCw className={`h-3.5 w-3.5 ${loading ? "animate-spin" : ""}`} /> Refresh
+            </Button>
+          )}
+        </div>
       </div>
 
-      {/* Search Bar */}
-      <Card className="border-border/80 bg-card/60 backdrop-blur-sm">
-        <CardContent className="p-3">
-          <div className="flex gap-2">
-            <div className="relative flex-1">
-              <Search className="absolute left-2.5 top-2.5 h-3.5 w-3.5 text-muted-foreground" />
-              <Input
-                placeholder="Search across all conversations..."
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                onKeyDown={(e) => e.key === "Enter" && handleSearch()}
-                className="pl-8 h-8 text-xs bg-muted/30"
-              />
+      {/* ─── MAIN TAB 1: INDIVIDUAL CONVERSATIONS ─── */}
+      {mainTab === "conversations" && (
+        <div className="space-y-4">
+          {/* Direct Interactive AI Interaction in Memory */}
+          <Card className="rounded-2xl border border-primary/30 bg-primary/5 p-4 shadow-md">
+            <div className="flex items-center gap-2 mb-2 text-xs font-bold text-primary">
+              <Sparkles className="h-4 w-4" />
+              <span>Interact with Sovereign AI from Memory</span>
             </div>
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={handleSearch}
-              disabled={isSearching}
-              className="h-8 px-3 gap-1"
-            >
-              {isSearching ? (
-                <Loader2 className="h-3 w-3 animate-spin" />
-              ) : (
-                <Search className="h-3 w-3" />
-              )}
-              Search
-            </Button>
-          </div>
-          {/* Backend memory search results */}
-          {memoryResults.length > 0 && (
-            <div className="mt-3 space-y-2">
-              <p className="text-[10px] text-muted-foreground font-semibold uppercase tracking-wide">
-                Long-Term Memory Search Results
+            <p className="text-[11px] text-muted-foreground mb-3">
+              Ask questions or add instructions directly. Every interaction is saved as an individual conversation in memory.
+            </p>
+            <div className="flex items-center gap-2">
+              <Input
+                placeholder="Ask sovereign AI to recall, synthesize, or discuss any topic..."
+                value={directPrompt}
+                onChange={(e) => setDirectPrompt(e.target.value)}
+                onKeyDown={(e) => e.key === "Enter" && !e.shiftKey && handleDirectAiSend()}
+                disabled={isAiStreaming}
+                className="h-9 text-xs bg-background/80"
+              />
+              <Button
+                size="sm"
+                onClick={handleDirectAiSend}
+                disabled={!directPrompt.trim() || isAiStreaming}
+                className="h-9 px-4 gap-1.5 text-xs font-semibold shrink-0"
+              >
+                {isAiStreaming ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Send className="h-3.5 w-3.5" />}
+                <span>Send</span>
+              </Button>
+            </div>
+
+            {/* Live streaming bubble if active */}
+            {(isAiStreaming || directStreamText) && (
+              <div className="mt-3 p-3.5 rounded-xl bg-card border border-border text-xs space-y-2 animate-in fade-in-50">
+                {directThinking && (
+                  <div className="text-[11px] text-primary flex items-center gap-1.5 animate-pulse">
+                    <Loader2 className="h-3 w-3 animate-spin" />
+                    {directThinking}
+                  </div>
+                )}
+                {directStreamText && (
+                  <div className="whitespace-pre-wrap text-foreground leading-relaxed">
+                    {directStreamText}
+                  </div>
+                )}
+              </div>
+            )}
+          </Card>
+
+          {/* Conversations List */}
+          {filteredConversations.length === 0 ? (
+            <div className="flex flex-col items-center justify-center py-16 text-center text-muted-foreground bg-white/40 dark:bg-black/20 rounded-2xl border border-dashed border-border p-6">
+              <MessageSquare className="h-10 w-10 mb-3 opacity-30 text-primary" />
+              <h3 className="font-bold text-sm text-foreground">No conversations stored yet</h3>
+              <p className="text-xs text-muted-foreground mt-1 max-w-md">
+                Interact with the AI using the prompt above, or start a conversation in the Main Chat, Datasets, or Notes tabs. Every session will appear here as an individual conversation.
               </p>
-              {memoryResults.map((entry) => (
-                <div
-                  key={entry.id}
-                  className="p-2.5 rounded-lg border border-border/70 bg-card/40 text-xs space-y-1"
-                >
-                  <div className="flex items-start gap-2">
-                    <span className="font-semibold text-primary shrink-0">You:</span>
-                    <span className="text-foreground">{entry.query}</span>
-                  </div>
-                  <div className="flex items-start gap-2">
-                    <span className="font-semibold text-emerald-400 shrink-0">AI:</span>
-                    <span className="text-muted-foreground line-clamp-2">{entry.response}</span>
-                  </div>
-                </div>
+            </div>
+          ) : (
+            <div className="space-y-3">
+              {filteredConversations.map((thread) => (
+                <ConversationCard
+                  key={thread.threadId}
+                  thread={thread}
+                  onDelete={handleDeleteConversation}
+                />
               ))}
             </div>
           )}
-        </CardContent>
-      </Card>
+        </div>
+      )}
 
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-5 items-start">
-        {/* Left: Conversation History */}
-        <Card className="border-border/80 bg-card/60 backdrop-blur-sm">
-          <CardHeader className="pb-3">
-            <CardTitle className="text-base flex items-center gap-2">
-              <MessageSquare className="h-4 w-4 text-emerald-400" />
-              Conversation History
-              {filteredThreads.length > 0 && (
-                <Badge variant="secondary" className="text-[10px] ml-auto">
-                  {filteredThreads.length} threads
-                </Badge>
-              )}
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-2">
-            {filteredThreads.length === 0 ? (
-              <div className="p-8 text-center text-xs text-muted-foreground border border-dashed rounded-lg">
-                <Clock className="h-8 w-8 mb-2 opacity-40 mx-auto" />
-                <p className="text-sm font-medium">No conversations yet</p>
-                <p className="text-[11px] text-muted-foreground/80 mt-1">
-                  Start chatting in any chatbox (Home, Datasets, Notes) and all
-                  conversations will appear here automatically.
-                </p>
-              </div>
-            ) : (
-              <div className="space-y-2 max-h-[560px] overflow-y-auto pr-1">
-                {filteredThreads.map((thread) => {
-                  const isExpanded = expandedThreads.has(thread.threadId);
-                  const SourceIcon: React.ElementType =
-                    SOURCE_ICONS[thread.source] ?? MessageSquare;
-                  const lastUserMsg = [...thread.messages]
-                    .reverse()
-                    .find((m) => m.role === "user");
-                  const lastAsstMsg = [...thread.messages]
-                    .reverse()
-                    .find((m) => m.role === "assistant");
-                  return (
-                    <div
-                      key={thread.threadId}
-                      className="border border-border/70 rounded-lg overflow-hidden"
-                    >
-                      {/* Thread Header */}
-                      <button
-                        type="button"
-                        className="w-full flex items-center gap-2 p-3 bg-card/40 hover:bg-card/80 transition-colors text-left"
-                        onClick={() => toggleThread(thread.threadId)}
-                      >
-                        {isExpanded ? (
-                          <ChevronDown className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
-                        ) : (
-                          <ChevronRight className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
-                        )}
-                        <div
-                          className={`flex items-center gap-1 px-2 py-0.5 rounded border text-[10px] font-medium ${SOURCE_COLORS[thread.source]}`}
-                        >
-                          <SourceIcon className="h-3 w-3" />
-                          <span>{SOURCE_LABELS[thread.source] ?? thread.source}</span>
-                        </div>
-                        <span className="text-xs font-medium text-foreground flex-1 truncate">
-                          {thread.label}
-                        </span>
-                        <span className="text-[10px] text-muted-foreground font-mono shrink-0">
-                          {thread.messages.length} msgs
-                        </span>
-                        <button
-                          type="button"
-                          onClick={(e) => handleClearThread(thread.threadId, e)}
-                          className="h-5 w-5 flex items-center justify-center rounded text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition-colors ml-1 shrink-0"
-                          title="Clear this thread"
-                        >
-                          <X className="h-3 w-3" />
-                        </button>
-                      </button>
-
-                      {/* Preview when collapsed */}
-                      {!isExpanded && (lastUserMsg || lastAsstMsg) && (
-                        <div className="px-3 pb-2.5 space-y-1">
-                          {lastUserMsg && (
-                            <div className="flex items-start gap-2 text-xs">
-                              <span className="font-semibold text-primary shrink-0">You:</span>
-                              <span className="text-foreground/80 line-clamp-1">
-                                {lastUserMsg.content}
-                              </span>
-                            </div>
-                          )}
-                          {lastAsstMsg && (
-                            <div className="flex items-start gap-2 text-xs">
-                              <span className="font-semibold text-emerald-400 shrink-0">AI:</span>
-                              <span className="text-muted-foreground line-clamp-1">
-                                {lastAsstMsg.content}
-                              </span>
-                            </div>
-                          )}
-                        </div>
-                      )}
-
-                      {/* Expanded full thread */}
-                      {isExpanded && (
-                        <div className="px-3 pb-3 space-y-2 max-h-72 overflow-y-auto border-t border-border/60">
-                          {thread.messages.map((msg) => (
-                            <div
-                              key={msg.id}
-                              className="flex items-start gap-2 text-xs pt-2"
-                            >
-                              <span
-                                className={`font-semibold shrink-0 ${
-                                  msg.role === "user"
-                                    ? "text-primary"
-                                    : "text-emerald-400"
-                                }`}
-                              >
-                                {msg.role === "user" ? "You:" : "AI:"}
-                              </span>
-                              <span className="text-foreground whitespace-pre-wrap">
-                                {msg.content}
-                              </span>
-                            </div>
-                          ))}
-                        </div>
-                      )}
-                    </div>
-                  );
-                })}
-              </div>
-            )}
-          </CardContent>
-        </Card>
-
-        {/* Right: Dedicated Memory Chatbox */}
-        <Card className="border-border/80 bg-card/60 backdrop-blur-sm flex flex-col">
-          <CardHeader className="pb-3 border-b border-border/60">
-            <CardTitle className="text-base flex items-center gap-2">
-              <CornerDownRight className="h-4 w-4 text-violet-500" />
-              Memory Chatbox
-              <Badge
-                variant="outline"
-                className="ml-auto text-[10px] bg-violet-500/10 text-violet-500 border-violet-500/30"
-              >
-                Context-Aware
-              </Badge>
-            </CardTitle>
-            <p className="text-[11px] text-muted-foreground">
-              Ask questions grounded in all your past chatbox conversations.
-            </p>
-          </CardHeader>
-          <CardContent className="flex flex-col p-3 gap-3">
-            {/* Messages */}
-            <div className="flex-1 max-h-[420px] overflow-y-auto space-y-3">
-              {chatMessages.map((msg) => (
-                <div
-                  key={msg.id}
-                  className={`flex gap-2 ${
-                    msg.role === "user" ? "justify-end" : "justify-start"
-                  }`}
-                >
-                  {msg.role === "assistant" && (
-                    <div className="h-7 w-7 shrink-0 rounded-lg bg-violet-500/15 border border-violet-500/25 flex items-center justify-center text-violet-500">
-                      <Bot className="h-3.5 w-3.5" />
-                    </div>
-                  )}
-                  <div
-                    className={`max-w-[85%] rounded-xl px-3 py-2 text-xs shadow-sm ${
-                      msg.role === "user"
-                        ? "bg-primary text-primary-foreground"
-                        : "bg-card border border-border/70 text-foreground"
-                    }`}
-                  >
-                    <div className="whitespace-pre-wrap leading-relaxed">
-                      {msg.content}
-                      {msg.role === "assistant" && msg.content === "" && isChatStreaming && (
-                        <span className="inline-block h-3.5 w-0.5 bg-current animate-pulse ml-0.5" />
-                      )}
-                    </div>
-                  </div>
-                  {msg.role === "user" && (
-                    <div className="h-7 w-7 shrink-0 rounded-lg bg-secondary border border-border/60 flex items-center justify-center text-foreground">
-                      <User className="h-3.5 w-3.5" />
-                    </div>
-                  )}
-                </div>
-              ))}
-              <div ref={chatEndRef} />
-            </div>
-
-            {/* Input */}
-            <form
-              onSubmit={(e) => {
-                e.preventDefault();
-                handleMemoryChatSend();
-              }}
-              className="flex gap-2"
-            >
-              <Input
-                placeholder="Ask based on past conversations..."
-                value={chatInput}
-                onChange={(e) => setChatInput(e.target.value)}
-                disabled={isChatStreaming}
-                className="flex-1 h-9 text-xs bg-background/80"
-              />
+      {/* ─── MAIN TAB 2: EXTRACTED MEMORY RECORDS ─── */}
+      {mainTab === "records" && (
+        <div className="space-y-4">
+          {/* Status and Type filter pills */}
+          <div className="flex flex-wrap items-center gap-2">
+            {(["all", "active", "pending"] as StatusTab[]).map((tab) => (
               <Button
-                type="submit"
+                key={tab}
                 size="sm"
-                disabled={!chatInput.trim() || isChatStreaming}
-                className="h-9 gap-1.5"
+                variant={statusTab === tab ? "default" : "outline"}
+                className="h-7 text-xs capitalize"
+                onClick={() => setStatusTab(tab)}
               >
-                {isChatStreaming ? (
-                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                ) : (
-                  <Send className="h-3.5 w-3.5" />
-                )}
+                {tab}
               </Button>
-            </form>
+            ))}
 
-            {/* Hint if no history yet */}
-            {threads.length === 0 && (
-              <div className="text-[11px] text-muted-foreground/70 text-center py-1">
-                No conversation history yet. Chat in any section to populate memory.
-              </div>
-            )}
-          </CardContent>
-        </Card>
-      </div>
+            <div className="w-px h-5 bg-border mx-1" />
+
+            {(["all", "semantic", "episodic", "procedural", "preference"] as TypeFilter[]).map((t) => {
+              const Icon = t === "all" ? BookOpen : TYPE_ICONS[t] ?? Brain;
+              return (
+                <Button
+                  key={t}
+                  size="sm"
+                  variant={typeFilter === t ? "secondary" : "ghost"}
+                  className="h-7 text-xs capitalize gap-1"
+                  onClick={() => setTypeFilter(t)}
+                >
+                  <Icon className="h-3 w-3" />
+                  {t}
+                </Button>
+              );
+            })}
+          </div>
+
+          {/* Records list */}
+          {loading ? (
+            <div className="flex items-center justify-center py-12 text-muted-foreground gap-2">
+              <Loader2 className="h-5 w-5 animate-spin" />
+              <span>Loading memories...</span>
+            </div>
+          ) : filteredRecords.length === 0 ? (
+            <div className="flex flex-col items-center justify-center py-12 text-muted-foreground text-center">
+              <Brain className="h-10 w-10 mb-3 opacity-30 text-primary" />
+              <p className="text-sm font-medium">
+                {searchQuery
+                  ? "No memories match your search."
+                  : "No memory records found."}
+              </p>
+            </div>
+          ) : (
+            <div className="space-y-3">
+              {filteredRecords.map((rec) => (
+                <MemoryCard
+                  key={rec.id}
+                  memory={rec}
+                  onApprove={handleApprove}
+                  onReject={handleReject}
+                  onForget={handleForget}
+                />
+              ))}
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }

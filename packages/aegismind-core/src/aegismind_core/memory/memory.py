@@ -35,6 +35,25 @@ class ConversationMemory:
             query_embedding=query_embedding,
         )
 
+    async def store_conversation(
+        self, user_id: str, tenant_id: str, query: str, response: str, embedder: Any | None = None
+    ) -> str:
+        """Store a conversation turn and return the ID."""
+        query_embedding = None
+        if embedder:
+            try:
+                embedding = await embedder.embed_query(query)
+                query_embedding = json.dumps(embedding)
+            except Exception:
+                pass
+        return self.store.store(
+            user_id=user_id,
+            tenant_id=tenant_id,
+            query=query,
+            response=response,
+            query_embedding=query_embedding,
+        )
+
     async def retrieve_context(
         self, query: str, user_id: str, tenant_id: str, embedder: Any, top_k: int = 5
     ) -> str:
@@ -48,3 +67,46 @@ class ConversationMemory:
 
     def clear(self, user_id: str, tenant_id: str) -> None:
         self.retriever.clear(user_id, tenant_id)
+
+
+async def retrieve_context_v2(
+    store: Any,  # SQLiteMemoryStore
+    query: str,
+    namespace: str,
+    embedder: Any | None = None,
+    top_k: int = 5,
+) -> tuple[str, list[dict[str, Any]]]:
+    """Retrieve memories for a query and format them into an XML-tagged context string.
+
+    Returns:
+        A tuple of (formatted_context_string, list_of_memories_used).
+        If no memories match, returns ("", []).
+    """
+    embedding = None
+    if embedder is not None:
+        try:
+            embedding = list(await embedder.embed_query(query))
+        except Exception as exc:
+            logger.debug("Failed to embed query for memory search: %s", exc)
+
+    results = await store.search(
+        query=query,
+        embedding=embedding,
+        namespace=namespace,
+        top_k=top_k,
+    )
+
+    if not results:
+        return "", []
+
+    memories_used = []
+    lines = ["<memory>"]
+    for i, res in enumerate(results, start=1):
+        mem = res.memory
+        lines.append(f"  <fact id=\"{mem.id}\" type=\"{mem.type.value}\">")
+        lines.append(f"    {mem.content}")
+        lines.append("  </fact>")
+        memories_used.append(mem.model_dump())
+    
+    lines.append("</memory>\n")
+    return "\n".join(lines), memories_used

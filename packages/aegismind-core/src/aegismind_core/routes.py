@@ -34,6 +34,7 @@ from aegismind_types import (
 )
 from fastapi import (
     APIRouter,
+    Body,
     File,
     Form,
     HTTPException,
@@ -53,19 +54,26 @@ from aegismind_core.agent import (
     LocalToolActivityRecorder,
     NoteCreatorAdapter,
     SandboxedCommandRunnerAdapter,
+    SaveMemoryAdapter,
     SovereignAgentLoop,
     SystemFileReaderAdapter,
 )
 from aegismind_core.approval import ApprovalGate
+from aegismind_core.approvals import ApprovalStore, ProposalStatus, evaluate
 from aegismind_core.budgeting import apply_context_budget
 from aegismind_core.connector_runtime import (
     CONNECTOR_OAUTH_MAP,
     GITHUB_OAUTH_SCOPES,
     GOOGLE_OAUTH_SCOPES,
     hydrate_connector,
+)
+from aegismind_core.connector_runtime import (
     store_secret as persist_connector_secret,
 )
 from aegismind_core.memory import ConversationMemory
+from aegismind_core.memory.extractor import MemoryExtractor
+from aegismind_core.memory.models import MemoryFilter, MemoryStatus, MemoryType
+from aegismind_core.memory.sqlite_store import SQLiteMemoryStore
 from aegismind_core.oauth import get_oauth_provider
 from aegismind_core.observability import trace_span
 from aegismind_core.ports.llm import LLMPort
@@ -161,7 +169,9 @@ class SystemModeRequest(BaseModel):
 
     model_config = ConfigDict(frozen=True)
 
-    air_gapped: bool = Field(..., description="True for Sovereign Air-Gapped Mode, False for Connected")
+    air_gapped: bool = Field(
+        ..., description="True for Sovereign Air-Gapped Mode, False for Connected"
+    )
 
 
 class ConnectorConnectRequest(BaseModel):
@@ -170,7 +180,9 @@ class ConnectorConnectRequest(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     token: str | None = Field(default=None, description="Access token or PAT (stored securely)")
-    config: dict[str, Any] = Field(default_factory=dict, description="Connector configuration options")
+    config: dict[str, Any] = Field(
+        default_factory=dict, description="Connector configuration options"
+    )
 
 
 class ConnectorActionRequest(BaseModel):
@@ -392,10 +404,12 @@ class CoreState:
         self.indexed_resources: list[dict[str, Any]] = []
         self.feedback_entries: list[FeedbackEntry] = []
 
-        # Knowledge graph, approval gate, and conversation memory
+        # Knowledge graph, approval store, and conversation memory
         self.graph_engine = KnowledgeGraphEngine(graph_path="./storage/graph/graph.json")
+        self.approval_store = ApprovalStore(db_path="./storage/approval/approvals.db")
         self.approval_gate = ApprovalGate(approval_log_path="./storage/approval/approvals.json")
         self.memory = ConversationMemory(db_path="./storage/memory/memory.db")
+        self.long_term_memory = SQLiteMemoryStore(db_path="./storage/memory/ltm.db")
         self.activity_recorder = LocalToolActivityRecorder(
             storage_path="./storage/activity/tool_events.json"
         )
@@ -419,6 +433,38 @@ class CoreState:
         )
         self.audit_log.append(entry)
         return entry
+
+
+class MemoryUpdateRequest(BaseModel):
+    """Payload to update or approve a memory."""
+
+    status: MemoryStatus | None = None
+    content: str | None = None
+    importance: float | None = Field(default=None, ge=0.0, le=1.0)
+    type: MemoryType | None = None
+    entities: list[str] | None = None
+
+
+class MemoryExtractRequest(BaseModel):
+    """Payload for on-demand memory extraction from a conversation thread."""
+
+    model_config = ConfigDict(frozen=True)
+
+    messages: list[dict[str, str]] = Field(
+        ..., description="[{role: user|assistant, content: ...}] conversation turns"
+    )
+    namespace: str = Field(default="global", description="Target namespace")
+    private: bool = Field(default=False, description="True skips extraction entirely")
+    source_thread_id: str | None = Field(default=None, description="Source thread identifier")
+
+
+class ApproveRequest(BaseModel):
+    edited_args: dict[str, Any] | None = Field(default=None)
+
+
+class RejectRequest(BaseModel):
+    reason: str
+
 
 
 def create_routes(state: CoreState) -> APIRouter:
@@ -479,7 +525,9 @@ def create_routes(state: CoreState) -> APIRouter:
                     type_map = {"local": "filesystem", "github": "github", "gmail": "gmail"}
                     mapped = list({type_map.get(s, s) for s in src_list})
                     if mapped:
-                        effective_pre_filter["source_type"] = mapped if len(mapped) > 1 else mapped[0]
+                        effective_pre_filter["source_type"] = (
+                            mapped if len(mapped) > 1 else mapped[0]
+                        )
 
                 result = await pipeline.execute(
                     query=req.query,
@@ -525,7 +573,13 @@ def create_routes(state: CoreState) -> APIRouter:
         tenant_id: str | None = Query(None, description="Tenant ID"),
         model: str | None = Query(None, description="Ollama model for answer generation"),
         top_k: int = Query(5, ge=1, le=20),
-        sources: str | None = Query(None, description="Comma-separated source filter: local,github,gmail"),
+        sources: str | None = Query(
+            None, description="Comma-separated source filter: local,github,gmail"
+        ),
+        namespace: str = Query("global", description="Memory namespace for this conversation"),
+        private_mode: bool = Query(
+            False, description="If true, skip memory retrieval and extraction"
+        ),
     ) -> StreamingResponse:
         pipeline = state.retrieval_pipeline
         if pipeline is None:
@@ -599,25 +653,20 @@ def create_routes(state: CoreState) -> APIRouter:
             effective_tenant_id = tenant_id or "corp-default"
 
             memory_context = ""
-            try:
-                memory_context = await state.memory.retrieve_context(
-                    query=query,
-                    user_id=effective_principal_id,
-                    tenant_id=effective_tenant_id,
-                    embedder=getattr(pipeline, "embedder", None),
-                    top_k=3,
-                )
-                # Strip image paths from memory context to prevent LLM errors
-                import re
+            memories_used = []
+            if not private_mode:
+                from aegismind_core.memory import retrieve_context_v2
 
-                memory_context = re.sub(
-                    r".*\.(?:png|jpg|jpeg|gif|bmp|webp|tiff|svg).*",
-                    "",
-                    memory_context,
-                    flags=re.IGNORECASE,
-                )
-            except Exception as exc:
-                logger.debug("Memory retrieval failed: %s", exc)
+                try:
+                    memory_context, memories_used = await retrieve_context_v2(
+                        store=state.long_term_memory,
+                        query=query,
+                        namespace=namespace,
+                        embedder=getattr(pipeline, "embedder", None),
+                        top_k=5,
+                    )
+                except Exception as exc:
+                    logger.debug("Memory retrieval failed: %s", exc)
 
             # Stage 2b: Token budgeting and prompt formulation
             budget_res = apply_context_budget(
@@ -765,6 +814,7 @@ def create_routes(state: CoreState) -> APIRouter:
                     "citations_count": len(citations),
                     "top_k": len(surviving_results),
                     "notice": trim_notice,
+                    "memories_used": memories_used,
                 }
             )
             yield f"event: done\ndata: {done_payload}\n\n"
@@ -823,6 +873,106 @@ def create_routes(state: CoreState) -> APIRouter:
     ) -> dict[str, str]:
         await state.memory.record_conversation(user_id, tenant_id, query, response)
         return {"status": "stored"}
+
+    # 9. POST /api/v1/memory/extract: Extract typed memories from a conversation thread
+    @router.post("/memory/extract", tags=["memory"])
+    async def memory_extract(req: MemoryExtractRequest = Body(...)) -> dict[str, Any]:
+        """Extract typed, deduplicated memory candidates from a conversation thread.
+
+        Uses the local Ollama model to extract facts.  All extracted memories
+        start as PENDING and require user approval before becoming active.
+        """
+        embedder = (
+            getattr(state.retrieval_pipeline, "embedder", None)
+            if state.retrieval_pipeline
+            else None
+        )
+        ollama_url = os.environ.get("OLLAMA_URL", "http://localhost:11434")
+        model = os.environ.get("OLLAMA_MODEL", "llama3.2:latest")
+        extractor = MemoryExtractor(
+            store=state.long_term_memory,
+            ollama_url=ollama_url,
+            model=model,
+        )
+        result = await extractor.extract_from_thread(
+            messages=req.messages,
+            namespace=req.namespace,
+            private=req.private,
+            source_thread_id=req.source_thread_id,
+            embedder=embedder,
+        )
+        return {
+            "extracted": [m.model_dump() for m in result.extracted],
+            "skipped_duplicate": result.skipped_duplicate,
+            "skipped_contradiction": result.skipped_contradiction,
+            "superseded": result.superseded,
+        }
+
+    @router.get("/memory/records", tags=["memory"])
+    async def list_memory_records(
+        namespace: str | None = None,
+        status: MemoryStatus | None = None,
+        type: MemoryType | None = None,
+        limit: int = 50,
+    ) -> list[dict[str, Any]]:
+        """List memories with optional filters."""
+        namespace = namespace or "global"
+        types = [type] if type else None
+        statuses = [status] if status else None
+        filters = MemoryFilter(
+            namespace=namespace, statuses=statuses, types=types, limit=min(limit, 500)
+        )
+        records = await state.long_term_memory.list(filters)
+        return [r.model_dump() for r in records]
+
+    @router.get("/memory/records/{memory_id}", tags=["memory"])
+    async def get_memory_record(memory_id: str) -> dict[str, Any]:
+        """Fetch a single memory by ID."""
+        record = await state.long_term_memory.get(memory_id)
+        if not record:
+            raise HTTPException(status_code=404, detail="Memory not found")
+        return record.model_dump()
+
+    @router.patch("/memory/records/{memory_id}", tags=["memory"])
+    async def update_memory_record(
+        memory_id: str, req: MemoryUpdateRequest | None = None
+    ) -> dict[str, Any]:
+        """Update or approve a memory. Setting status to active approves it."""
+        if req is None:
+            raise HTTPException(status_code=400, detail="Request body is required")
+        record = await state.long_term_memory.get(memory_id)
+        if not record:
+            raise HTTPException(status_code=404, detail="Memory not found")
+
+        # Handle explicit approval
+        if req.status == MemoryStatus.ACTIVE and record.status == MemoryStatus.PENDING:
+            record = await state.long_term_memory.approve(memory_id)
+
+        # Handle other updates
+        updates = req.model_dump(exclude_unset=True)
+
+        # Remove status if we already handled it via approve
+        status_val = updates.get("status")
+        if status_val == MemoryStatus.ACTIVE or status_val == MemoryStatus.ACTIVE.value:
+            if record.status == MemoryStatus.ACTIVE:
+                updates.pop("status")
+
+        if updates:
+            record = await state.long_term_memory.update(memory_id, **updates)
+
+        return record.model_dump()
+
+    @router.delete("/memory/records/{memory_id}", tags=["memory"])
+    async def delete_memory_record(memory_id: str) -> dict[str, str]:
+        """Forget a memory (tombstone)."""
+        await state.long_term_memory.forget(memory_id)
+        return {"status": "forgotten"}
+
+    @router.get("/memory/records/{memory_id}/audit", tags=["memory"])
+    async def get_memory_audit(memory_id: str) -> list[dict[str, Any]]:
+        """Retrieve the immutable hash-chained audit log for a memory."""
+        events = await state.long_term_memory.list_audit(memory_id=memory_id)
+        return [e.model_dump() for e in events]
 
     # 3. GET|POST /api/v1/connectors: Spec discovery, configuration, sync triggering
     @router.get("/connectors")
@@ -954,18 +1104,6 @@ def create_routes(state: CoreState) -> APIRouter:
             metadata={"run_id": run_id, "connector_type": connector.spec().name},
         )
 
-        # Record the sync start in the LocalTools activity system so it appears in the UI
-        activity_event_id = state.activity_recorder.record_start(
-            tool_name=f"{connector_id.upper()}_SYNC",
-            category="knowledge",
-            parameters={
-                "connector_id": connector_id,
-                "connector_type": connector.spec().name,
-                "run_id": run_id,
-            },
-            agent_id="system",
-        )
-
         try:
             report: ScribeSyncReport = await state.scribe_worker.run_sync(
                 run_id=run_id,
@@ -984,19 +1122,6 @@ def create_routes(state: CoreState) -> APIRouter:
                     "status": report.status,
                 },
             )
-            # Record completion in activity system
-            state.activity_recorder.record_complete(
-                event_id=activity_event_id.event_id,
-                result_summary=(
-                    f"Synced {report.records_synced} records, "
-                    f"{report.chunks_indexed} chunks indexed"
-                ),
-                metadata={
-                    "records_synced": report.records_synced,
-                    "chunks_indexed": report.chunks_indexed,
-                    "status": report.status,
-                },
-            )
             return {"status": report.status, "report": report.model_dump()}
         except Exception as exc:
             state.record_audit(
@@ -1005,11 +1130,6 @@ def create_routes(state: CoreState) -> APIRouter:
                 action="SYNC_FAILED",
                 resource_id=connector_id,
                 metadata={"run_id": run_id, "error": str(exc)},
-            )
-            state.activity_recorder.record_complete(
-                event_id=activity_event_id.event_id,
-                result_summary=f"Sync failed: {exc}",
-                metadata={"error": str(exc), "status": "FAILED"},
             )
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -1075,7 +1195,7 @@ def create_routes(state: CoreState) -> APIRouter:
             spec = conn.spec()
             if spec.network_required:
                 guard.assert_network_allowed(connector_id)
-            sources = await conn.list_sources()  # type: ignore[attr-defined]
+            sources = await conn.list_sources()
             return {
                 "connector_id": connector_id,
                 "sources": [s.model_dump() for s in sources],
@@ -1107,6 +1227,7 @@ def create_routes(state: CoreState) -> APIRouter:
             "offset": offset,
             "resources": paged,
         }
+
     # 3f. POST /api/v1/connectors/{connector_id}/connect: Provide credentials and connect
     @router.post("/connectors/{connector_id}/connect")
     async def connect_connector(connector_id: str, req: ConnectorConnectRequest) -> dict[str, Any]:
@@ -1194,11 +1315,15 @@ def create_routes(state: CoreState) -> APIRouter:
             return None
         return client_id, client_secret
 
-    def _oauth_return_redirect(provider: str, status_value: str, detail: str = "") -> RedirectResponse:
+    def _oauth_return_redirect(
+        provider: str, status_value: str, detail: str = ""
+    ) -> RedirectResponse:
         params = f"oauth={status_value}&provider={provider}"
         if detail:
             params += f"&detail={quote(detail, safe='')}"
-        return RedirectResponse(url=f"{_lens_app_url()}/?{params}", status_code=status.HTTP_302_FOUND)
+        return RedirectResponse(
+            url=f"{_lens_app_url()}/?{params}", status_code=status.HTTP_302_FOUND
+        )
 
     @router.get("/oauth/status")
     async def oauth_status() -> dict[str, Any]:
@@ -1234,13 +1359,19 @@ def create_routes(state: CoreState) -> APIRouter:
             )
         client_id, client_secret = creds
         scope = GITHUB_OAUTH_SCOPES if normalized == "github" else GOOGLE_OAUTH_SCOPES
-        oauth_provider = get_oauth_provider(normalized, client_id, client_secret, default_scope=scope)
+        oauth_provider = get_oauth_provider(
+            normalized, client_id, client_secret, default_scope=scope
+        )
         csrf_state = secrets.token_urlsafe(24)
         state.oauth_states[csrf_state] = normalized
         redirect_uri = f"{_oauth_redirect_base()}/api/v1/oauth/{normalized}/callback"
         extra = None
         if normalized == "google":
-            extra = {"access_type": "offline", "prompt": "consent", "include_granted_scopes": "true"}
+            extra = {
+                "access_type": "offline",
+                "prompt": "consent",
+                "include_granted_scopes": "true",
+            }
         authorize_url = oauth_provider.get_authorization_url(
             redirect_uri=redirect_uri,
             state=csrf_state,
@@ -1269,7 +1400,9 @@ def create_routes(state: CoreState) -> APIRouter:
             return _oauth_return_redirect(normalized, "error", "not_configured")
         client_id, client_secret = creds
         scope = GITHUB_OAUTH_SCOPES if normalized == "github" else GOOGLE_OAUTH_SCOPES
-        oauth_provider = get_oauth_provider(normalized, client_id, client_secret, default_scope=scope)
+        oauth_provider = get_oauth_provider(
+            normalized, client_id, client_secret, default_scope=scope
+        )
         redirect_uri = f"{_oauth_redirect_base()}/api/v1/oauth/{normalized}/callback"
         try:
             token = await oauth_provider.exchange_code(code=code, redirect_uri=redirect_uri)
@@ -1277,7 +1410,9 @@ def create_routes(state: CoreState) -> APIRouter:
             logger.warning("OAuth code exchange failed for %s: %s", normalized, exc)
             return _oauth_return_redirect(normalized, "error", "exchange_failed")
 
-        await persist_connector_secret(state.secret_store, f"{connector_id}_token", token.access_token)
+        await persist_connector_secret(
+            state.secret_store, f"{connector_id}_token", token.access_token
+        )
         if token.refresh_token:
             await persist_connector_secret(
                 state.secret_store, f"{connector_id}_refresh_token", token.refresh_token
@@ -1686,6 +1821,27 @@ def create_routes(state: CoreState) -> APIRouter:
                 f"USER QUESTION: {req.query}"
             )
 
+        # Retrieve long-term memory context if available
+        memory_context = ""
+        memories_used = []
+        try:
+            pipeline = state.retrieval_pipeline
+            embedder = getattr(pipeline, "embedder", None)
+            from aegismind_core.memory import retrieve_context_v2
+
+            memory_context, memories_used = await retrieve_context_v2(
+                store=state.long_term_memory,
+                query=req.query,
+                namespace="global",
+                embedder=embedder,
+                top_k=3,
+            )
+        except Exception as exc:
+            logger.debug("Study chat memory retrieval skipped: %s", exc)
+
+        if memory_context:
+            prompt = f"LONG-TERM USER CONTEXT:\n{memory_context}\n\n" + prompt
+
         try:
             answer = await llm_adapter.generate(
                 prompt=prompt,
@@ -1756,6 +1912,7 @@ def create_routes(state: CoreState) -> APIRouter:
             "answer": answer.strip(),
             "mode": req.mode,
             "memory_saved": True,
+            "memories_used": memories_used,
         }
 
     # POST /api/v1/datasets/{document_id}/chat and POST /api/v1/datasets/chat
@@ -1793,13 +1950,16 @@ def create_routes(state: CoreState) -> APIRouter:
 
         # Retrieve long-term memory context if available
         memory_context = ""
+        memories_used = []
         try:
             pipeline = state.retrieval_pipeline
             embedder = getattr(pipeline, "embedder", None)
-            memory_context = await state.memory.retrieve_context(
+            from aegismind_core.memory import retrieve_context_v2
+
+            memory_context, memories_used = await retrieve_context_v2(
+                store=state.long_term_memory,
                 query=req.query,
-                user_id=req.user_id,
-                tenant_id=req.tenant_id,
+                namespace="global",
                 embedder=embedder,
                 top_k=3,
             )
@@ -1872,6 +2032,7 @@ def create_routes(state: CoreState) -> APIRouter:
             "title": effective_title,
             "answer": answer.strip(),
             "memory_saved": True,
+            "memories_used": memories_used,
         }
 
     # 11. POST & GET /api/v1/feedback: User thumbs up/down and answer evaluation hook
@@ -2041,12 +2202,15 @@ def create_routes(state: CoreState) -> APIRouter:
             audit_recorder=state.record_audit,
             working_dir=Path.cwd(),
         )
+        save_memory_tool = SaveMemoryAdapter(store=state.long_term_memory)
 
         agent_loop = SovereignAgentLoop(
             search_tool=search_tool,
             file_reader_tool=file_tool,
             note_tool=note_tool,
             command_tool=command_tool,
+            save_memory_tool=save_memory_tool,
+            approval_store=state.approval_store,
             model=req.model,
             audit_recorder=state.record_audit,
             activity_recorder=state.activity_recorder,
@@ -2172,6 +2336,38 @@ def create_routes(state: CoreState) -> APIRouter:
             error=msg if not success else None,
         )
         return {"status": "created", "message": msg, "title": req.title}
+
+    # 15c. DELETE /api/v1/notes/{slug}: Delete a note from the vault
+    @router.delete("/notes/{slug}", tags=["notes"])
+    async def delete_vault_note(
+        slug: str,
+        notes_dir: str = Query("./storage/notes"),
+    ) -> dict[str, Any]:
+        """Delete a note from the local markdown vault."""
+        from pathlib import Path
+
+        file_path = (Path(notes_dir) / slug).resolve()  # noqa: ASYNC240
+        notes_root = Path(notes_dir).resolve()  # noqa: ASYNC240
+        if not (file_path == notes_root or notes_root in file_path.parents):
+            raise HTTPException(status_code=403, detail="Invalid note path traversal")
+        if not file_path.exists() or not file_path.is_file():  # noqa: ASYNC240
+            raise HTTPException(status_code=404, detail=f"Note '{slug}' not found")
+
+        try:
+            file_path.unlink()
+            state.activity_recorder.record_event(
+                tool_name="delete_note",
+                parameters={"slug": slug, "notes_dir": notes_dir},
+                status="success",
+                duration_ms=2.0,
+                category="notes",
+                approval_required=False,
+                result_summary=f"Deleted note {slug}",
+            )
+            return {"status": "deleted", "slug": slug}
+        except Exception as exc:
+            raise HTTPException(status_code=500, detail=f"Failed to delete note: {exc}")
+
 
     # 16. GET /api/v1/agent/tools: Live/recent feed of agent tool calls for UI transparency
     @router.get("/agent/tools", tags=["agent"])
@@ -2356,6 +2552,65 @@ def create_routes(state: CoreState) -> APIRouter:
     @router.get("/approval/stats", tags=["approval"])
     async def approval_stats() -> dict[str, Any]:
         return cast(dict[str, Any], state.approval_gate.get_stats())
+
+    # --- Approval Routes ---
+
+    @router.get("/api/v1/approvals")
+    async def list_approvals(status: str | None = Query(default=None)) -> dict[str, Any]:
+        proposals = state.approval_store.list_by_status(status)
+        return {
+            "approvals": [p.model_dump() for p in proposals],
+            "total": len(proposals),
+        }
+
+    @router.get("/api/v1/approvals/{proposal_id}")
+    async def get_approval(proposal_id: str) -> dict[str, Any]:
+        proposal = state.approval_store.get(proposal_id)
+        if proposal is None:
+            raise HTTPException(status_code=404, detail="Proposal not found")
+        return proposal.model_dump()
+
+    @router.post("/api/v1/approvals/{proposal_id}/approve")
+    async def approve_proposal(proposal_id: str, req: ApproveRequest = Body(...)) -> dict[str, Any]:
+        proposal = state.approval_store.get(proposal_id)
+        if proposal is None:
+            raise HTTPException(status_code=404, detail="Proposal not found")
+        if proposal.status != ProposalStatus.PENDING:
+            raise HTTPException(
+                status_code=400, detail=f"Proposal is not pending (status={proposal.status.value})"
+            )
+        if proposal.is_expired():
+            proposal.status = ProposalStatus.EXPIRED
+            state.approval_store.update(proposal)
+            raise HTTPException(status_code=400, detail="Proposal has expired")
+        final_args = req.edited_args if req.edited_args else proposal.args
+        policy_result = evaluate(proposal.tool_name, final_args)
+        if policy_result == "deny":
+            proposal.status = ProposalStatus.REJECTED
+            proposal.decision_reason = "Edited args still violate deny policy"
+            state.approval_store.update(proposal)
+            raise HTTPException(status_code=403, detail="Edited args violate deny policy")
+        proposal.edited_args = final_args
+        proposal.status = ProposalStatus.APPROVED
+        state.approval_store.update(proposal)
+        return {"status": "approved", "proposal_id": proposal_id, "args": final_args}
+
+    @router.post("/api/v1/approvals/{proposal_id}/reject")
+    async def reject_proposal(proposal_id: str, req: RejectRequest = Body(...)) -> dict[str, Any]:
+        proposal = state.approval_store.get(proposal_id)
+        if proposal is None:
+            raise HTTPException(status_code=404, detail="Proposal not found")
+        if proposal.status != ProposalStatus.PENDING:
+            raise HTTPException(
+                status_code=400, detail=f"Proposal is not pending (status={proposal.status.value})"
+            )
+        proposal.status = ProposalStatus.REJECTED
+        proposal.decision_reason = req.reason
+        state.approval_store.update(proposal)
+        return {"status": "rejected", "proposal_id": proposal_id}
+
+    # Expire old proposals on startup
+    state.approval_store.expire_old()
 
     return router
 

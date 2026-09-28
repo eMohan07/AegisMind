@@ -4,6 +4,8 @@ import json
 import logging
 import os
 import re
+import shlex
+import sys
 import time
 from collections.abc import Callable
 from datetime import UTC, datetime
@@ -17,10 +19,13 @@ from aegismind_core.agent.ports import (
     LocalKnowledgeSearchPort,
     NoteCreatorPort,
     SandboxedCommandRunnerPort,
+    SaveMemoryPort,
     SystemFileReaderPort,
     ToolActionResult,
 )
 from aegismind_core.agent.tools import IMAGE_EXTENSIONS
+from aegismind_core.approvals import Proposal, RiskLevel, evaluate
+from aegismind_core.approvals.store import ApprovalStore
 
 logger = logging.getLogger(__name__)
 
@@ -106,6 +111,28 @@ OLLAMA_TOOLS_SCHEMA: list[dict[str, Any]] = [
             },
         },
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "save_memory",
+            "description": (
+                "Save a fact to long-term memory with tags. This action requires "
+                "user approval before being executed."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "fact": {"type": "string", "description": "The fact to save"},
+                    "tags": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Tags for the fact",
+                    },
+                },
+                "required": ["fact", "tags"],
+            },
+        },
+    },
 ]
 
 
@@ -132,6 +159,8 @@ class SovereignAgentLoop:
         file_reader_tool: SystemFileReaderPort,
         note_tool: NoteCreatorPort,
         command_tool: SandboxedCommandRunnerPort,
+        save_memory_tool: SaveMemoryPort | None = None,
+        approval_store: ApprovalStore | None = None,
         ollama_url: str | None = None,
         model: str | None = None,
         audit_recorder: Callable[..., Any] | None = None,
@@ -143,6 +172,8 @@ class SovereignAgentLoop:
         self.file_reader_tool = file_reader_tool
         self.note_tool = note_tool
         self.command_tool = command_tool
+        self.save_memory_tool = save_memory_tool
+        self.approval_store = approval_store
         self.ollama_url = (
             ollama_url or os.environ.get("OLLAMA_URL") or "http://localhost:11434"
         ).rstrip("/")
@@ -151,6 +182,12 @@ class SovereignAgentLoop:
         self.activity_recorder = activity_recorder
         self.max_tool_calls_per_turn = max_tool_calls_per_turn
         self.chat_executor = chat_executor
+
+    def _classify_tool(self, tool_name: str, args: dict[str, Any]) -> str:
+        """Classify a tool call as 'auto', 'approval', or 'deny'."""
+        if self.approval_store is None:
+            return "auto"
+        return evaluate(tool_name, args)
 
     async def _execute_tool(self, name: str, args: dict[str, Any], query: str) -> ToolActionResult:
         approval_required = name in ("run_local_command", "create_note")
@@ -196,6 +233,15 @@ class SovereignAgentLoop:
                     "COMMAND_PARSE_ERROR"
                 ):
                     success = False
+            elif name == "save_memory":
+                if self.save_memory_tool is not None:
+                    fact = str(args.get("fact", ""))
+                    raw_tags = args.get("tags", [])
+                    tags = [str(t) for t in raw_tags] if isinstance(raw_tags, list) else []
+                    res_text = await self.save_memory_tool.save_memory(fact=fact, tags=tags)
+                else:
+                    res_text = "SAVE_MEMORY_FAILED: save_memory tool not configured"
+                    success = False
             else:
                 res_text = f"UNKNOWN_TOOL: Tool '{name}' is not recognized."
                 success = False
@@ -203,17 +249,17 @@ class SovereignAgentLoop:
             logger.error("Error executing tool %s: %s", name, exc)
             res_text = f"TOOL_EXECUTION_ERROR: {exc}"
             success = False
+        finally:
+            if self.activity_recorder and active_event:
+                self.activity_recorder.record_complete(
+                    event_id=active_event.event_id,
+                    status="success" if success else "failed",
+                    duration_ms=(time.perf_counter() - start_time) * 1000.0,
+                    result_summary=res_text[:300],
+                    error=res_text if not success else None,
+                )
 
         duration_ms = (time.perf_counter() - start_time) * 1000.0
-
-        if self.activity_recorder and active_event:
-            self.activity_recorder.record_complete(
-                event_id=active_event.event_id,
-                status="success" if success else "failed",
-                duration_ms=duration_ms,
-                result_summary=res_text[:300],
-                error=res_text if not success else None,
-            )
 
         action_result = ToolActionResult(
             tool_name=name,
@@ -238,6 +284,38 @@ class SovereignAgentLoop:
 
         return action_result
 
+    def _create_proposal(
+        self, tool_name: str, args: dict[str, Any], risk: str, reasoning: str, preview: str
+    ) -> Proposal:
+        """Create a Proposal for an approval-required tool."""
+        proposal = Proposal(
+            tool_name=tool_name,
+            args=args,
+            risk=RiskLevel(risk),
+            reasoning=reasoning,
+            preview=preview,
+            source_refs=[],
+            tainted=False,
+            taint_sources=[],
+        )
+        if self.approval_store is not None:
+            self.approval_store.create(proposal)
+        logger.info("Created proposal %s for tool %s", proposal.id, tool_name)
+        return proposal
+
+    def _build_preview(self, tool_name: str, args: dict[str, Any]) -> str:
+        """Build a preview for the proposal."""
+        if tool_name == "create_note":
+            return json.dumps(args)
+        if tool_name == "run_local_command":
+            cmd = str(args.get("cmd", ""))
+            try:
+                argv = shlex.split(cmd.strip(), posix=(sys.platform != "win32"))
+                return str(argv)
+            except Exception:
+                return cmd
+        return json.dumps(args)
+
     @staticmethod
     def _filter_image_content(text: str) -> str:
         """Filter out image-related content from tool results."""
@@ -251,16 +329,10 @@ class SovereignAgentLoop:
     @staticmethod
     def _sanitize_text(text: str) -> str:
         """Remove ANSI escape codes, control characters, and excessive Unicode."""
-        # Remove ANSI escape codes
         text = re.sub(r"\x1b\[[0-9;]*[a-zA-Z]", "", text)
-        # Remove control characters except newlines, tabs, carriage returns
         text = re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f]", "", text)
-        # Normalize excessive Unicode (replace common problematic chars)
-        text = text.replace("\u200b", "")  # Zero-width space
-        text = text.replace("\u200c", "")  # Zero-width non-joiner
-        text = text.replace("\u200d", "")  # Zero-width joiner
-        text = text.replace("\ufeff", "")  # BOM
-        # Replace special quote characters with ASCII
+        text = text.replace("\u200b", "").replace("\u200c", "").replace("\u200d", "")
+        text = text.replace("\ufeff", "")
         text = text.replace("\u201c", '"').replace("\u201d", '"')
         text = text.replace("\u2018", "'").replace("\u2019", "'")
         return text
@@ -274,8 +346,8 @@ class SovereignAgentLoop:
         if self.chat_executor is not None:
             res = self.chat_executor(messages, tools)
             if hasattr(res, "__await__"):
-                return await res  # type: ignore[no-any-return]
-            return res  # type: ignore[no-any-return]
+                return cast(dict[str, Any], await res)
+            return cast(dict[str, Any], res)
 
         payload = {
             "model": self.model,
@@ -302,7 +374,7 @@ class SovereignAgentLoop:
         default_system = (
             "You are AegisMind Local Sovereign Agent. You operate completely offline on the "
             "user's machine. You have direct access to local tools: search_local_knowledge, "
-            "read_system_file, create_note, and run_local_command.\n"
+            "read_system_file, create_note, run_local_command, and save_memory.\n"
             "When the user asks you to inspect system files or logs, search local docs, diagnose "
             "issues, or record notes, use the available tools proactively before providing your "
             "final answer."
@@ -334,7 +406,6 @@ class SovereignAgentLoop:
             tool_calls = assistant_msg.get("tool_calls", [])
             messages.append(assistant_msg)
 
-            # If no tool calls were requested, model has returned its final synthesized answer
             if not tool_calls:
                 final_content = assistant_msg.get("content", "").strip()
                 duration = (datetime.now(UTC) - start_ts).total_seconds() * 1000.0
@@ -345,7 +416,6 @@ class SovereignAgentLoop:
                     duration_ms=round(duration, 2),
                 )
 
-            # Process tool calls
             for tc in tool_calls:
                 if total_calls >= self.max_tool_calls_per_turn:
                     logger.warning(
@@ -360,14 +430,79 @@ class SovereignAgentLoop:
                     json.loads(raw_args) if isinstance(raw_args, str) else raw_args
                 )
 
+                if self.approval_store is None:
+                    classification = "auto"
+                else:
+                    classification = self._classify_tool(tool_name, args)
+
+                if classification == "deny":
+                    filtered_result = self._filter_image_content(
+                        f"ACTION_BLOCKED: Tool '{tool_name}' is denied by policy."
+                    )
+                    messages.append(
+                        {
+                            "role": "tool",
+                            "content": filtered_result,
+                            "name": tool_name,
+                        }
+                    )
+                    action_result = ToolActionResult(
+                        tool_name=tool_name,
+                        arguments=args,
+                        result=f"ACTION_BLOCKED: Tool '{tool_name}' is denied by policy.",
+                        success=False,
+                        timestamp=datetime.now(UTC).isoformat(),
+                    )
+                    actions_taken.append(action_result)
+                    total_calls += 1
+                    continue
+
+                if classification == "approval":
+                    preview = self._build_preview(tool_name, args)
+                    reasoning = f"Agent wants to execute {tool_name}"
+                    risk_str = "medium"
+                    if tool_name == "save_memory":
+                        risk_str = "low"
+                    elif tool_name == "create_note":
+                        risk_str = "low"
+                    elif tool_name == "run_local_command":
+                        risk_str = "medium"
+                    proposal = self._create_proposal(
+                        tool_name=tool_name,
+                        args=args,
+                        risk=risk_str,
+                        reasoning=reasoning,
+                        preview=preview,
+                    )
+                    filtered_result = self._filter_image_content(
+                        f"Queued for user approval, do not retry (proposal_id: {proposal.id})"
+                    )
+                    messages.append(
+                        {
+                            "role": "tool",
+                            "content": filtered_result,
+                            "name": tool_name,
+                        }
+                    )
+                    action_result = ToolActionResult(
+                        tool_name=tool_name,
+                        arguments=args,
+                        result=(
+                            f"Queued for user approval, do not retry "
+                            f"(proposal_id: {proposal.id})"
+                        ),
+                        success=False,
+                        timestamp=datetime.now(UTC).isoformat(),
+                    )
+                    actions_taken.append(action_result)
+                    total_calls += 1
+                    continue
+
                 action_result = await self._execute_tool(tool_name, args, query=prompt)
                 actions_taken.append(action_result)
                 total_calls += 1
 
-                # Filter out image-related content from tool results
                 filtered_result = self._filter_image_content(action_result.result)
-
-                # Feed tool result back into conversation history
                 messages.append(
                     {
                         "role": "tool",
@@ -376,7 +511,6 @@ class SovereignAgentLoop:
                     }
                 )
 
-        # Reached tool limit without final answer: ask for final synthesis
         messages.append(
             {
                 "role": "user",

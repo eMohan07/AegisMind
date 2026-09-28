@@ -3,8 +3,16 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription,
+} from "@/components/ui/dialog";
 import { streamChat, listModels, parseFile, type Citation, type ModelInfo } from "@/lib/api";
 import { recordExchange } from "@/lib/conversationStore";
+import { format12HrDateTime } from "@/lib/utils";
 import {
   Bot,
   User,
@@ -21,6 +29,7 @@ import {
   Volume2,
   VolumeX,
   Plus,
+  PlusCircle,
   Square,
   Send,
 } from "lucide-react";
@@ -83,7 +92,7 @@ export function Chat({
       id: "msg-welcome",
       role: "assistant",
       content:
-        "Welcome to AegisMind. Ask any question across your enterprise repositories. All answers are strictly governed by sovereign access control evaluated at retrieval time.",
+        "Welcome to AegisMind. Ask any question. All answers are strictly governed by sovereign access control evaluated at retrieval time.",
       timestamp: "Just now",
     },
   ]);
@@ -97,9 +106,26 @@ export function Chat({
   // When recallMode is true the user is asking the agent to retrieve answers
   // from past conversation memory across all chatboxes
   const [recallMode, setRecallMode] = React.useState(false);
+  const [convId, setConvId] = React.useState<string>(() => `chat-${Date.now()}`);
+  const [convTitle, setConvTitle] = React.useState<string>("");
   const [isSpeaking, setIsSpeaking] = React.useState(false);
   const [speakingMsgId, setSpeakingMsgId] = React.useState<string | null>(null);
   const [speechErrorMsg, setSpeechErrorMsg] = React.useState<string | null>(null);
+
+  const handleNewChat = () => {
+    setMessages([
+      {
+        id: "msg-welcome",
+        role: "assistant",
+        content:
+          "Welcome to AegisMind. Ask any question. All answers are strictly governed by sovereign access control evaluated at retrieval time.",
+        timestamp: "Just now",
+      },
+    ]);
+    setConvId(`chat-${Date.now()}`);
+    setConvTitle("");
+    setSelectedCitation(null);
+  };
 
   const {
     transcript,
@@ -292,6 +318,10 @@ export function Chat({
     const userMsgId = `user-${Date.now()}`;
     const assistantMsgId = `asst-${Date.now()}`;
     const rawQuery = inputQuery.trim() || "Please analyze the attached file(s).";
+    const activeLabel = convTitle || (rawQuery.length > 50 ? rawQuery.slice(0, 50) + "..." : rawQuery);
+    if (!convTitle) {
+      setConvTitle(activeLabel);
+    }
 
     // In recallMode, prefix the query so the agent searches past conversation memory
     const query = recallMode
@@ -390,11 +420,11 @@ export function Chat({
         setIsStreaming(false);
         setCurrentThinking(null);
         abortStreamRef.current = null;
-        // Persist the completed exchange to the cross-chatbox conversation store
+        // Persist the completed exchange to the cross-chatbox conversation store as an individual conversation
         if (accumulatedResponse.trim()) {
           recordExchange({
-            threadId: "home",
-            label: "Main Chat",
+            threadId: convId,
+            label: activeLabel,
             source: "home",
             userMessage: {
               id: userMsgId,
@@ -441,42 +471,44 @@ export function Chat({
   };
 
   return (
-    <div className="flex h-full flex-col lg:flex-row gap-4 p-4 max-w-7xl mx-auto w-full">
+    <div className="flex h-full flex-col p-4 max-w-5xl mx-auto w-full">
       {/* Main Conversation Column */}
-      <div className="flex flex-1 flex-col h-[calc(100vh-8rem)] rounded-xl border border-border/80 bg-card/70 backdrop-blur-sm overflow-hidden shadow-xs">
+      <div className="flex flex-1 flex-col h-[calc(100vh-7.5rem)] rounded-2xl border border-slate-200/90 dark:border-white/10 bg-white/95 dark:bg-[#141826]/90 backdrop-blur-2xl overflow-hidden shadow-xl dark:shadow-2xl transition-colors">
         {/* Context Header */}
-        <div className="flex items-center justify-between border-b border-border/70 px-4 py-3 bg-muted/20">
+        <div className="flex items-center justify-between border-b border-slate-200/80 dark:border-white/10 px-4 py-3 bg-slate-50/80 dark:bg-white/[0.03] backdrop-blur-md transition-colors">
           <div className="flex items-center gap-2">
-            <Shield className="h-4 w-4 text-emerald-500" />
-            <span className="text-xs font-medium text-foreground">
+            <Shield className="h-4 w-4 text-emerald-500 dark:text-emerald-400" />
+            <span className="text-xs font-medium text-slate-800 dark:text-white/90">
               Sovereign Enforced Session
             </span>
           </div>
           <div className="flex items-center gap-2 text-xs">
-            <span className="text-muted-foreground">Tenant:</span>
-            <Badge variant="outline" className="font-mono text-[11px]">
-              {currentTenantId}
-            </Badge>
-            <span className="text-muted-foreground ml-2">User:</span>
-            <Badge variant="outline" className="font-mono text-[11px] text-primary">
-              {currentUserId}
-            </Badge>
-            <div className="flex items-center gap-1.5 ml-2 border-l border-border/60 pl-2">
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={handleNewChat}
+              className="h-7 px-2 text-xs text-muted-foreground hover:text-foreground"
+              title="Start a new individual conversation"
+            >
+              <PlusCircle className="h-3.5 w-3.5 mr-1" />
+              <span>New Chat</span>
+            </Button>
+            <div className="flex items-center gap-1.5">
               <Cpu className="h-3.5 w-3.5 text-primary" />
               <select
                 value={selectedModel}
                 onChange={(e) => setSelectedModel(e.target.value)}
-                className="bg-transparent text-xs font-mono text-foreground focus:outline-none cursor-pointer"
+                className="bg-slate-100 dark:bg-black/70 text-xs font-mono text-slate-800 dark:text-white/90 border border-slate-300 dark:border-white/15 rounded px-1.5 py-0.5 focus:outline-none cursor-pointer"
                 title="Select Ollama model"
               >
                 {modelInfo?.models && modelInfo.models.length > 0 ? (
                   modelInfo.models.map((m) => (
-                    <option key={m} value={m} className="bg-card">
+                    <option key={m} value={m} className="bg-white dark:bg-[#12151f] text-slate-900 dark:text-white">
                       {m}
                     </option>
                   ))
                 ) : (
-                  <option value="llama3.2:latest" className="bg-card">
+                  <option value="llama3.2:latest" className="bg-white dark:bg-[#12151f] text-slate-900 dark:text-white">
                     llama3.2:latest
                   </option>
                 )}
@@ -495,16 +527,16 @@ export function Chat({
               }`}
             >
               {msg.role === "assistant" && (
-                <div className="flex h-8 w-8 shrink-0 select-none items-center justify-center rounded-lg bg-primary/15 text-primary border border-primary/25">
+                <div className="flex h-8 w-8 shrink-0 select-none items-center justify-center rounded-lg bg-primary/15 dark:bg-primary/20 text-primary border border-primary/25 dark:border-primary/30 shadow-xs">
                   <Bot className="h-4 w-4" />
                 </div>
               )}
 
               <div
-                className={`max-w-[85%] rounded-2xl px-4 py-3 text-sm shadow-sm ${
+                className={`max-w-[85%] rounded-2xl px-4 py-3 text-sm shadow-md transition-all ${
                   msg.role === "user"
-                    ? "bg-primary text-primary-foreground shadow-primary/20"
-                    : "bg-card border border-border/70 text-foreground"
+                    ? "bg-primary text-white shadow-primary/25"
+                    : "bg-slate-100/90 dark:bg-white/5 border border-slate-200/90 dark:border-white/10 text-slate-800 dark:text-white/90 backdrop-blur-md"
                 }`}
               >
                 {/* Attached Files & Images in Message Bubble */}
@@ -580,7 +612,7 @@ export function Chat({
                       : "text-muted-foreground text-left"
                   }`}
                 >
-                  {msg.timestamp}
+                  {format12HrDateTime(msg.timestamp)}
                 </div>
               </div>
 
@@ -604,34 +636,34 @@ export function Chat({
         </div>
 
         {/* Input Bar with Attached Files & Images Tray */}
-        <div className="border-t border-border/70 p-3 bg-card/75">
+        <div className="border-t border-slate-200/80 dark:border-white/10 p-3 bg-slate-50/90 dark:bg-[#131724]/60 backdrop-blur-xl transition-colors">
           {/* Attached Files & Images Preview Tray */}
           {attachedFiles.length > 0 && (
             <div className="mb-2.5 flex flex-wrap gap-2 animate-in fade-in-50 duration-150">
               {attachedFiles.map((att) => (
                 <div
                   key={att.id}
-                  className="flex items-center gap-2 pl-2 pr-1.5 py-1 rounded-lg bg-secondary border border-border/80 text-xs shadow-2xs group"
+                  className="flex items-center gap-2 pl-2 pr-1.5 py-1 rounded-lg bg-white dark:bg-white/10 border border-slate-200 dark:border-white/15 text-xs shadow-xs group"
                 >
                   {att.isImage && att.previewUrl ? (
                     <img
                       src={att.previewUrl}
                       alt={att.name}
-                      className="h-6 w-6 rounded object-cover border border-border/60"
+                      className="h-6 w-6 rounded object-cover border border-slate-200 dark:border-white/20"
                     />
                   ) : (
                     <FileText className="h-4 w-4 text-primary shrink-0" />
                   )}
-                  <span className="max-w-[130px] truncate font-medium text-foreground text-[11px]">
+                  <span className="max-w-[130px] truncate font-medium text-slate-800 dark:text-white text-[11px]">
                     {att.name}
                   </span>
-                  <span className="text-[10px] text-muted-foreground">
+                  <span className="text-[10px] text-slate-400 dark:text-white/50">
                     ({(att.size / 1024).toFixed(0)} KB)
                   </span>
                   <button
                     type="button"
                     onClick={() => removeAttachment(att.id)}
-                    className="h-4.5 w-4.5 rounded-full flex items-center justify-center hover:bg-muted text-muted-foreground hover:text-foreground transition-colors ml-0.5"
+                    className="h-4.5 w-4.5 rounded-full flex items-center justify-center hover:bg-slate-200 dark:hover:bg-white/20 text-slate-400 hover:text-slate-800 dark:text-white/60 dark:hover:text-white transition-colors ml-0.5"
                     title="Remove attachment"
                   >
                     <X className="h-3 w-3" />
@@ -643,13 +675,13 @@ export function Chat({
 
           {/* Speech Error Warning Banner */}
           {speechErrorMsg && (
-            <div className="mb-2 px-3 py-1.5 rounded-lg bg-amber-500/10 border border-amber-500/30 flex items-center gap-2 text-xs text-amber-600 dark:text-amber-400 animate-in fade-in-50 duration-150">
+            <div className="mb-2 px-3 py-1.5 rounded-lg bg-amber-500/15 border border-amber-500/30 flex items-center gap-2 text-xs text-amber-600 dark:text-amber-400 animate-in fade-in-50 duration-150">
               <MicOff className="h-3.5 w-3.5 shrink-0 text-amber-500" />
               <span className="flex-1 font-medium">{speechErrorMsg}</span>
               <button
                 type="button"
                 onClick={() => setSpeechErrorMsg(null)}
-                className="text-amber-400 hover:text-amber-600 ml-1"
+                className="text-amber-500 hover:text-amber-700 dark:text-amber-400 dark:hover:text-amber-300 ml-1"
               >
                 <X className="h-3.5 w-3.5" />
               </button>
@@ -658,7 +690,7 @@ export function Chat({
 
           {/* Voice Input Listening Active Banner */}
           {listening && (
-            <div className="mb-2 px-3 py-1.5 rounded-lg bg-rose-500/10 border border-rose-500/30 flex items-center gap-2 text-xs text-rose-600 dark:text-rose-400 animate-in fade-in-50 duration-150">
+            <div className="mb-2 px-3 py-1.5 rounded-lg bg-rose-500/15 border border-rose-500/30 flex items-center gap-2 text-xs text-rose-600 dark:text-rose-400 animate-in fade-in-50 duration-150">
               <Mic className="h-3.5 w-3.5 shrink-0 animate-pulse text-rose-500" />
               <span className="flex-1 font-medium">
                 {isMicrophoneAvailable === false
@@ -668,7 +700,7 @@ export function Chat({
               <button
                 type="button"
                 onClick={toggleListening}
-                className="text-rose-400 hover:text-rose-600 ml-1"
+                className="text-rose-500 hover:text-rose-700 dark:text-rose-400 dark:hover:text-rose-300 ml-1"
                 title="Stop voice input"
               >
                 <X className="h-3.5 w-3.5" />
@@ -678,7 +710,7 @@ export function Chat({
 
           {/* Memory Recall Mode Banner */}
           {recallMode && (
-            <div className="mb-2 px-3 py-1.5 rounded-lg bg-violet-500/10 border border-violet-500/30 flex items-center gap-2 text-xs text-violet-600 dark:text-violet-400 animate-in fade-in-50 duration-150">
+            <div className="mb-2 px-3 py-1.5 rounded-lg bg-violet-500/15 border border-violet-500/30 flex items-center gap-2 text-xs text-violet-600 dark:text-violet-400 animate-in fade-in-50 duration-150">
               <CornerDownRight className="h-3.5 w-3.5 shrink-0" />
               <span className="flex-1 font-medium">
                 Memory Recall Mode: your question will be answered from past conversation history across all chatboxes.
@@ -686,7 +718,7 @@ export function Chat({
               <button
                 type="button"
                 onClick={() => setRecallMode(false)}
-                className="text-violet-400 hover:text-violet-600 ml-1"
+                className="text-violet-500 hover:text-violet-700 dark:text-violet-400 dark:hover:text-violet-300 ml-1"
                 title="Cancel recall mode"
               >
                 <X className="h-3.5 w-3.5" />
@@ -715,10 +747,10 @@ export function Chat({
             <button
               type="button"
               onClick={() => fileInputRef.current?.click()}
-              className="h-10 w-10 shrink-0 rounded-lg flex items-center justify-center text-muted-foreground hover:text-foreground hover:bg-secondary border border-border/70 hover:border-border transition-all shadow-2xs group relative"
+              className="h-10 w-10 shrink-0 rounded-lg flex items-center justify-center text-slate-600 hover:text-slate-900 bg-white hover:bg-slate-100 border border-slate-200 hover:border-slate-300 dark:text-white/70 dark:hover:text-white dark:bg-white/5 dark:hover:bg-white/10 dark:border-white/10 dark:hover:border-white/20 transition-all shadow-xs group relative"
               title="Add files or images (+ / Pin)"
             >
-              <Plus className="h-4.5 w-4.5 text-foreground/80 group-hover:scale-110 transition-transform" />
+              <Plus className="h-4.5 w-4.5 text-slate-700 dark:text-white/80 group-hover:scale-110 transition-transform" />
               <Paperclip className="h-2.5 w-2.5 text-primary absolute bottom-1.5 right-1.5 opacity-80" />
             </button>
 
@@ -726,10 +758,10 @@ export function Chat({
             <button
               type="button"
               onClick={toggleListening}
-              className={`h-10 w-10 shrink-0 rounded-lg flex items-center justify-center border transition-all shadow-2xs relative ${
+              className={`h-10 w-10 shrink-0 rounded-lg flex items-center justify-center border transition-all shadow-xs relative ${
                 listening
-                  ? "bg-rose-500/20 border-rose-500/60 text-rose-600 dark:text-rose-400 animate-pulse ring-2 ring-rose-500/30"
-                  : "text-muted-foreground hover:text-foreground hover:bg-secondary border-border/70 hover:border-border"
+                  ? "bg-rose-500/25 border-rose-500/60 text-rose-600 dark:text-rose-400 animate-pulse ring-2 ring-rose-500/30"
+                  : "text-slate-600 hover:text-slate-900 bg-white hover:bg-slate-100 border-slate-200 hover:border-slate-300 dark:text-white/70 dark:hover:text-white dark:bg-white/5 dark:hover:bg-white/10 dark:border-white/10 dark:hover:border-white/20"
               }`}
               title={
                 listening
@@ -738,9 +770,9 @@ export function Chat({
               }
             >
               {listening ? (
-                <Mic className="h-4.5 w-4.5 text-rose-500 animate-bounce" />
+                <Mic className="h-4.5 w-4.5 text-rose-500 dark:text-rose-400 animate-bounce" />
               ) : (
-                <Mic className="h-4.5 w-4.5 text-foreground/80 hover:scale-110 transition-transform" />
+                <Mic className="h-4.5 w-4.5 text-slate-700 dark:text-white/80 hover:scale-110 transition-transform" />
               )}
               {listening && (
                 <span className="absolute -top-1 -right-1 flex h-3 w-3">
@@ -754,10 +786,10 @@ export function Chat({
             <button
               type="button"
               onClick={() => setRecallMode((prev) => !prev)}
-              className={`h-10 w-10 shrink-0 rounded-lg flex items-center justify-center border transition-all shadow-2xs ${
+              className={`h-10 w-10 shrink-0 rounded-lg flex items-center justify-center border transition-all shadow-xs ${
                 recallMode
-                  ? "bg-violet-500/20 border-violet-500/50 text-violet-600 dark:text-violet-400"
-                  : "text-muted-foreground hover:text-foreground hover:bg-secondary border-border/70 hover:border-border"
+                  ? "bg-violet-500/20 border-violet-500/50 text-violet-600 dark:text-violet-400 ring-2 ring-violet-500/30"
+                  : "text-slate-600 hover:text-slate-900 bg-white hover:bg-slate-100 border-slate-200 hover:border-slate-300 dark:text-white/70 dark:hover:text-white dark:bg-white/5 dark:hover:bg-white/10 dark:border-white/10 dark:hover:border-white/20"
               }`}
               title="Toggle Memory Recall Mode: ask the AI to answer from past conversation history"
             >
@@ -781,7 +813,9 @@ export function Chat({
                 }
               }}
               disabled={isStreaming}
-              className={`flex-1 bg-background/90 ${recallMode ? "border-violet-500/40 focus-visible:ring-violet-500/40" : ""}`}
+              className={`flex-1 bg-white dark:bg-white/5 border-slate-300 dark:border-white/15 text-slate-900 dark:text-white placeholder:text-slate-400 dark:placeholder:text-white/40 focus:border-primary/60 backdrop-blur-md ${
+                recallMode ? "border-violet-500/50 focus-visible:ring-violet-500/40" : ""
+              }`}
             />
 
             {isStreaming ? (
@@ -789,7 +823,7 @@ export function Chat({
                 type="button"
                 variant="destructive"
                 onClick={handleStop}
-                className="gap-1.5"
+                className="gap-1.5 shadow-md shadow-rose-500/20"
               >
                 <Square className="h-4 w-4 fill-current" />
                 Stop
@@ -798,7 +832,7 @@ export function Chat({
               <Button
                 type="submit"
                 disabled={!inputQuery.trim() && attachedFiles.length === 0}
-                className="gap-1.5"
+                className="gap-1.5 shadow-md shadow-primary/30"
               >
                 <Send className="h-4 w-4" />
                 Send
@@ -808,76 +842,51 @@ export function Chat({
         </div>
       </div>
 
-      {/* Interactive Citation Detail Panel */}
-      {selectedCitation ? (
-        <div className="w-full lg:w-96 rounded-xl border border-border/80 bg-card/60 p-4 backdrop-blur-sm flex flex-col justify-between animate-in slide-in-from-right-4 duration-200 shadow-xs">
-          <div className="space-y-3">
-            <div className="flex items-center justify-between border-b border-border/50 pb-2">
-              <div className="flex items-center gap-1.5">
-                <FileText className="h-4 w-4 text-primary" />
-                <span className="text-xs font-semibold text-foreground">
-                  Citation Inspector
-                </span>
+      {/* Popup Citation Inspector Modal (Zero Side-Panel Clutter) */}
+      <Dialog open={Boolean(selectedCitation)} onOpenChange={(open) => !open && setSelectedCitation(null)}>
+        <DialogContent className="sm:max-w-lg bg-white/95 dark:bg-[#141826]/95 border-slate-200 dark:border-white/10 text-slate-900 dark:text-white backdrop-blur-2xl">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-sm font-bold text-slate-900 dark:text-white">
+              <FileText className="h-4 w-4 text-primary" />
+              <span>Citation Inspector</span>
+            </DialogTitle>
+            <DialogDescription className="text-xs text-muted-foreground">
+              {selectedCitation?.title} (ID: {selectedCitation?.document_id})
+            </DialogDescription>
+          </DialogHeader>
+
+          {selectedCitation && (
+            <div className="space-y-3 py-2 text-xs">
+              <div className="p-3 rounded-xl bg-slate-100 dark:bg-white/5 border border-slate-200 dark:border-white/10 italic text-slate-700 dark:text-white/80 leading-relaxed">
+                "{selectedCitation.snippet}"
               </div>
-              <button
-                type="button"
-                onClick={() => setSelectedCitation(null)}
-                className="text-xs text-muted-foreground hover:text-foreground"
-              >
-                Close
-              </button>
+              <div className="flex items-center justify-between text-xs">
+                <span className="text-muted-foreground">Reranker Relevance:</span>
+                <Badge variant="success">
+                  {(selectedCitation.score * 100).toFixed(1)}% match
+                </Badge>
+              </div>
+              <div className="rounded-lg bg-emerald-500/10 dark:bg-emerald-500/15 border border-emerald-500/30 p-2.5 text-xs text-emerald-600 dark:text-emerald-400 flex items-center gap-2">
+                <Shield className="h-4 w-4 shrink-0" />
+                <span>Sovereign policy check passed</span>
+              </div>
+              {selectedCitation.uri && (
+                <div className="pt-2">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="w-full gap-1.5 text-xs"
+                    onClick={() => window.open(selectedCitation.uri, "_blank")}
+                  >
+                    Open Resource
+                    <ExternalLink className="h-3.5 w-3.5" />
+                  </Button>
+                </div>
+              )}
             </div>
-
-            <div>
-              <h4 className="text-sm font-semibold text-foreground leading-tight">
-                {selectedCitation.title}
-              </h4>
-              <p className="text-xs text-muted-foreground font-mono mt-0.5">
-                ID: {selectedCitation.document_id}
-              </p>
-            </div>
-
-            <Card className="bg-background/60 border-border/60">
-              <CardContent className="p-3 text-xs text-muted-foreground leading-relaxed">
-                <span className="font-semibold text-foreground">Extracted Snippet:</span>
-                <p className="mt-1 italic">"{selectedCitation.snippet}"</p>
-              </CardContent>
-            </Card>
-
-            <div className="flex items-center justify-between text-xs">
-              <span className="text-muted-foreground">Reranker Relevance:</span>
-              <Badge variant="success">
-                {(selectedCitation.score * 100).toFixed(1)}% match
-              </Badge>
-            </div>
-
-            <div className="rounded-lg bg-emerald-500/10 border border-emerald-500/20 p-2.5 text-xs text-emerald-600 dark:text-emerald-400 flex items-center gap-2">
-              <Shield className="h-4 w-4 shrink-0" />
-              <span>Sovereign policy check passed</span>
-            </div>
-          </div>
-
-          <div className="pt-4 border-t border-border/50">
-            <Button
-              variant="outline"
-              size="sm"
-              className="w-full gap-1.5 text-xs"
-              onClick={() => window.open(selectedCitation.uri, "_blank")}
-            >
-              Open Resource
-              <ExternalLink className="h-3.5 w-3.5" />
-            </Button>
-          </div>
-        </div>
-      ) : (
-        <div className="hidden lg:flex w-80 rounded-xl border border-dashed border-border/70 p-6 flex-col items-center justify-center text-center text-muted-foreground bg-card/30">
-          <FileText className="h-8 w-8 mb-2 opacity-40" />
-          <p className="text-xs font-medium">Citation Preview</p>
-          <p className="text-[11px] text-muted-foreground/80 mt-1">
-            Click any verified citation badge in the answer to view its source snippet and security token status.
-          </p>
-        </div>
-      )}
+          )}
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

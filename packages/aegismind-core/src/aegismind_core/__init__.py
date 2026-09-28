@@ -16,19 +16,23 @@ from aegismind_core.routes import (
     SearchApiRequest,
     create_routes,
 )
+from aegismind_core.approvals import ApprovalStore, Proposal, evaluate
 
 __version__ = "0.0.1"
 
 __all__ = [
     "AuditLogEntry",
+    "ApprovalStore",
     "ConnectorActionRequest",
     "CoreState",
     "GroupAliasRequest",
+    "Proposal",
     "SearchApiRequest",
     "clear_registry_overrides",
     "create_app",
     "create_mcp_router",
     "create_routes",
+    "evaluate",
     "list_adapters",
     "register_adapter",
     "resolve_adapter",

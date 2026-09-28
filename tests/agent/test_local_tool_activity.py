@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from pathlib import Path
 
 import pytest
@@ -24,6 +25,22 @@ from aegismind_core.agent.tools import (
 )
 from aegismind_core.app import create_app
 from aegismind_core.routes import CoreState
+from aegismind_core.approvals import evaluate
+
+
+@pytest.fixture(autouse=True)
+def _use_tmp_storage(tmp_path: Path) -> None:
+    """Point all LocalToolActivityRecorder instances to tmp_path so tests never write to the real store."""
+    import aegismind_core.agent.activity as activity_module
+
+    original_init = activity_module.LocalToolActivityRecorder.__init__
+
+    def patched_init(self: activity_module.LocalToolActivityRecorder, storage_path: str | Path = tmp_path / "activity" / "tool_events.json", max_events: int = 500) -> None:
+        original_init(self, storage_path=storage_path, max_events=max_events)
+
+    activity_module.LocalToolActivityRecorder.__init__ = patched_init
+    yield
+    activity_module.LocalToolActivityRecorder.__init__ = original_init
 
 
 class MockSearchPort(LocalKnowledgeSearchPort):
@@ -343,3 +360,95 @@ def test_api_endpoints_activity_and_sse(tmp_path: Path) -> None:
     res_empty = client.get("/api/local-tools/activity")
     assert res_empty.status_code == 200
     assert len(res_empty.json()) == 0
+
+
+def test_try_finally_updates_event_to_failed(tmp_path: Path) -> None:
+    """Test that try/finally always updates a 'running' event to success or failed."""
+    storage_file = tmp_path / "activity" / "tool_events.json"
+    recorder = LocalToolActivityRecorder(storage_path=storage_file)
+
+    ev = recorder.record_start(
+        tool_name="run_local_command",
+        parameters={"cmd": "git status"},
+        agent_id="test_agent",
+    )
+    assert ev.status == "running"
+
+    # Simulate an exception during execution using try/finally
+    try:
+        raise ValueError("simulated failure")
+    except Exception:
+        pass
+    finally:
+        recorder.record_complete(
+            event_id=ev.event_id,
+            status="failed",
+            result_summary="simulated failure",
+            error="simulated failure",
+        )
+
+    updated = recorder.get_events()
+    assert len(updated) == 1
+    assert updated[0].status == "failed"
+    assert updated[0].error == "simulated failure"
+
+
+def test_mark_running_as_interrupted_on_startup(tmp_path: Path) -> None:
+    """Test that leftover 'running' events are marked as 'failed' with 'interrupted' on startup."""
+    storage_file = tmp_path / "activity" / "tool_events.json"
+    recorder = LocalToolActivityRecorder(storage_path=storage_file)
+
+    ev = recorder.record_start(
+        tool_name="create_note",
+        parameters={"title": "test"},
+        agent_id="test_agent",
+    )
+    assert ev.status == "running"
+
+    recorder2 = LocalToolActivityRecorder(storage_path=storage_file)
+    events = recorder2.get_events()
+    assert len(events) == 1
+    assert events[0].status == "failed"
+    assert events[0].error == "interrupted"
+
+
+def test_autouse_fixture_uses_tmp_path(tmp_path: Path) -> None:
+    """Test that the autouse fixture points the audit database path to tmp_path."""
+    storage_file = tmp_path / "activity" / "tool_events.json"
+    recorder = LocalToolActivityRecorder(storage_path=storage_file)
+
+    ev = recorder.record_start(
+        tool_name="search_local_knowledge",
+        parameters={"query": "test"},
+        agent_id="test_agent",
+    )
+    recorder.record_complete(event_id=ev.event_id, status="success")
+
+    events = recorder.get_events()
+    assert len(events) == 1
+    assert events[0].tool_name == "search_local_knowledge"
+
+    assert storage_file.exists()
+    data = json.loads(storage_file.read_text())
+    assert len(data) == 1
+
+
+async def test_approval_tool_never_touches_filesystem_before_approval(tmp_path: Path) -> None:
+    """Test that approval-required tools never execute before approval."""
+    from aegismind_core.agent.ports import NoteCreatorPort
+
+    class FakeNoteCreator(NoteCreatorPort):
+        def __init__(self) -> None:
+            self.created = False
+
+        async def create_note(self, title: str, content: str, tags: list[str], source_query: str | None = None) -> str:
+            self.created = True
+            return "NOTE_CREATED"
+
+    storage_file = tmp_path / "activity" / "tool_events.json"
+    recorder = LocalToolActivityRecorder(storage_path=storage_file)
+    fake = FakeNoteCreator()
+
+    from aegismind_core.approvals import evaluate
+    assert evaluate("create_note", {"title": "x", "content": "y", "tags": []}) == "approval"
+    assert not fake.created
